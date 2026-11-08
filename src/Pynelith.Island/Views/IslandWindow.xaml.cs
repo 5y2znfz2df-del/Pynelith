@@ -98,7 +98,71 @@ namespace Pynelith.Island.Views
             UpdateTexts();
             UpdateLyric();
             Reposition();
+            _dockGuardActive = true;
             _clockTimer.Start();
+        }
+
+        // ---- 停靠位置守护 ----
+        // 实测发现：岛压在顶部任务栏上（y=0）时，一旦点击激活，Windows 会由
+        // 外部线程对本窗口发起 SetWindowPos，把它推回工作区顶部（work.Top），
+        // 表现为"点一下岛就往下偏移"。托管代码无法阻止该调用，只能在
+        // WM_WINDOWPOSCHANGING 阶段拦截：只要不是用户拖动，任何位移请求一律
+        // 改写回配置停靠位，保证岛永远钉在目标位置。
+        private bool _dockGuardActive;
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            if (PresentationSource.FromVisual(this) is System.Windows.Interop.HwndSource src)
+            {
+                src.AddHook(DockGuardWndProc);
+            }
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct WINDOWPOS
+        {
+            public IntPtr hwnd;
+            public IntPtr hwndInsertAfter;
+            public int x;
+            public int y;
+            public int cx;
+            public int cy;
+            public uint flags;
+        }
+
+        private IntPtr DockGuardWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_WINDOWPOSCHANGING = 0x0046;
+            const uint SWP_NOMOVE = 0x0002;
+
+            if (msg == WM_WINDOWPOSCHANGING && _dockGuardActive && !_dragging)
+            {
+                try
+                {
+                    var wp = System.Runtime.InteropServices.Marshal.PtrToStructure<WINDOWPOS>(lParam);
+                    if ((wp.flags & SWP_NOMOVE) == 0)
+                    {
+                        double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                        Rect work = SystemParameters.WorkArea;
+                        int targetX = (int)Math.Round((work.Left + (work.Width - Width) * 0.5 + Config.ScreenOffsetX) * dpi);
+                        int targetY = (int)Math.Round(Config.ScreenOffsetY * dpi);
+
+                        if (wp.x != targetX || wp.y != targetY)
+                        {
+                            wp.x = targetX;
+                            wp.y = targetY;
+                            System.Runtime.InteropServices.Marshal.StructureToPtr(wp, lParam, false);
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // 守护失败时放行，不影响正常消息处理。
+                }
+            }
+
+            return IntPtr.Zero;
         }
 
         #region 配置
@@ -443,7 +507,7 @@ namespace Pynelith.Island.Views
 
             Point current = e.GetPosition(this);
             // 阈值放宽：手部轻微抖动不应触发拖动，否则点击会把岛拖偏并写回偏移
-            bool moved = Math.Abs(current.X - _pressPoint.X) > 12 || Math.Abs(current.Y - _pressPoint.Y) > 12;
+            bool moved = Math.Abs(current.X - _pressPoint.X) > 20 || Math.Abs(current.Y - _pressPoint.Y) > 20;
             if (!moved)
             {
                 return;
@@ -474,6 +538,9 @@ namespace Pynelith.Island.Views
             if (isClick)
             {
                 ToggleExpanded();
+                // 点击完成后强制钉回停靠位：无论此前因何种来源产生过位移，
+                // 都保证岛停留在正确的顶部居中目标位置，不出现点击后偏移。
+                Reposition();
             }
         }
 
