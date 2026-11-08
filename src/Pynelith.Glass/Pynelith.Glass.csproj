@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Pynelith.Glass</RootNamespace>
+    <AssemblyName>Pynelith.Glass</AssemblyName>
+    <Description>独立液态玻璃/背景模糊/合成渲染模块（参考 WinIsland 渲染思路，自研实现，不含其代码）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 预编译的像素着色器字节码（fxc /T ps_3_0 生成，作为 WPF Resource 打包） -->
+    <Resource Include="Effects\Assets\LiquidGlass.gshader" Condition="Exists('Effects\Assets\LiquidGlass.gshader')" />
+  </ItemGroup>
+
+</Project>
