@@ -163,6 +163,70 @@ namespace Pynelith.Glass.Interop
 
         #endregion
 
+        #region Gdi32（屏幕采样）
+
+        public const uint SRCCOPY = 0x00CC0020;
+        public const uint CAPTUREBLT = 0x40000000;
+        public const uint DIB_RGB_COLORS = 0;
+        public const uint BI_RGB = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct BITMAPINFOHEADER
+        {
+            public int biSize;
+            public int biWidth;
+            public int biHeight;
+            public short biPlanes;
+            public short biBitCount;
+            public int biCompression;
+            public int biSizeImage;
+            public int biXPelsPerMeter;
+            public int biYPelsPerMeter;
+            public int biClrUsed;
+            public int biClrImportant;
+        }
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDC(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool DeleteDC(IntPtr hdc);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr SelectObject(IntPtr hdc, IntPtr hObject);
+
+        [DllImport("gdi32.dll")]
+        public static extern IntPtr CreateDIBSection(
+            IntPtr hdc, ref BITMAPINFOHEADER bmi, uint usage,
+            out IntPtr bits, IntPtr hSection, uint offset);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool BitBlt(
+            IntPtr hdcDest, int x, int y, int width, int height,
+            IntPtr hdcSrc, int srcX, int srcY, uint rop);
+
+        #endregion
+
+        #region User32（截屏排除）
+
+        public const uint WDA_NONE = 0x00000000;
+        /// <summary>Win10 2004+：窗口不参与任何截屏/抓屏，避免玻璃采样到自身。</summary>
+        public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+
+        #endregion
+
         #region Kernel32
 
         [DllImport("kernel32.dll")]

@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -7,9 +6,9 @@ using System.Windows.Media.Effects;
 namespace Pynelith.Glass.Effects
 {
     /// <summary>
-    /// 液态玻璃表面 ShaderEffect（GPU 像素着色，ps_3_0）。
-    /// 对元素的 Brush 内容做圆角边缘折射、高光与着色；
-    /// 与 GlassRenderer.Attach 的背景模糊层叠加使用。
+    /// 苹果风液态玻璃 ShaderEffect（GPU 像素着色，ps_3_0）。
+    /// 输入为背景采样（屏幕截图），输出带圆角裁剪的玻璃表面：
+    /// 轻模糊 + 高饱和背景、边缘透镜折射、镜面亮边、内侧厚度阴影。
     /// </summary>
     public sealed class LiquidGlassEffect : ShaderEffect
     {
@@ -20,31 +19,43 @@ namespace Pynelith.Glass.Effects
 
         public static readonly DependencyProperty ResolutionProperty =
             DependencyProperty.Register(nameof(Resolution), typeof(Point), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(new Point(200, 60), PixelShaderConstantCallback(0)));
+                new UIPropertyMetadata(new Point(400, 120), PixelShaderConstantCallback(0)));
 
         public static readonly DependencyProperty CornerRadiusProperty =
             DependencyProperty.Register(nameof(CornerRadius), typeof(double), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(16d, PixelShaderConstantCallback(1)));
+                new UIPropertyMetadata(20d, PixelShaderConstantCallback(1)));
 
-        public static readonly DependencyProperty EdgeWidthProperty =
-            DependencyProperty.Register(nameof(EdgeWidth), typeof(double), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(14d, PixelShaderConstantCallback(2)));
+        public static readonly DependencyProperty EdgeBandProperty =
+            DependencyProperty.Register(nameof(EdgeBand), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(18d, PixelShaderConstantCallback(2)));
 
         public static readonly DependencyProperty RefractionProperty =
             DependencyProperty.Register(nameof(Refraction), typeof(double), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(0.6d, PixelShaderConstantCallback(3)));
+                new UIPropertyMetadata(0.85d, PixelShaderConstantCallback(3)));
 
-        public static readonly DependencyProperty HighlightProperty =
-            DependencyProperty.Register(nameof(Highlight), typeof(double), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(0.35d, PixelShaderConstantCallback(4)));
+        public static readonly DependencyProperty BlurRadiusProperty =
+            DependencyProperty.Register(nameof(BlurRadius), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(3.5d, PixelShaderConstantCallback(4)));
+
+        public static readonly DependencyProperty SaturationProperty =
+            DependencyProperty.Register(nameof(Saturation), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(1.55d, PixelShaderConstantCallback(5)));
+
+        public static readonly DependencyProperty BrightnessProperty =
+            DependencyProperty.Register(nameof(Brightness), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(1.06d, PixelShaderConstantCallback(6)));
 
         public static readonly DependencyProperty TintProperty =
             DependencyProperty.Register(nameof(Tint), typeof(Color), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(Color.FromRgb(0x2A, 0x2A, 0x30), PixelShaderConstantCallback(5)));
+                new UIPropertyMetadata(Color.FromArgb(0xFF, 0xF2, 0xF6, 0xFF), PixelShaderConstantCallback(7)));
 
         public static readonly DependencyProperty TintOpacityProperty =
             DependencyProperty.Register(nameof(TintOpacity), typeof(double), typeof(LiquidGlassEffect),
-                new UIPropertyMetadata(0.45d, PixelShaderConstantCallback(6)));
+                new UIPropertyMetadata(0.06d, PixelShaderConstantCallback(8)));
+
+        public static readonly DependencyProperty HighlightProperty =
+            DependencyProperty.Register(nameof(Highlight), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(0.85d, PixelShaderConstantCallback(9)));
 
         public LiquidGlassEffect()
         {
@@ -52,21 +63,24 @@ namespace Pynelith.Glass.Effects
             UpdateShaderValue(InputProperty);
             UpdateShaderValue(ResolutionProperty);
             UpdateShaderValue(CornerRadiusProperty);
-            UpdateShaderValue(EdgeWidthProperty);
+            UpdateShaderValue(EdgeBandProperty);
             UpdateShaderValue(RefractionProperty);
-            UpdateShaderValue(HighlightProperty);
+            UpdateShaderValue(BlurRadiusProperty);
+            UpdateShaderValue(SaturationProperty);
+            UpdateShaderValue(BrightnessProperty);
             UpdateShaderValue(TintProperty);
             UpdateShaderValue(TintOpacityProperty);
+            UpdateShaderValue(HighlightProperty);
         }
 
-        /// <summary>元素自身内容画刷（WPF 自动填充）。</summary>
+        /// <summary>背景采样输入（ImageBrush 屏幕截图；也可用 Effect.ImplicitInput）。</summary>
         public Brush Input
         {
             get => (Brush)GetValue(InputProperty);
             set => SetValue(InputProperty, value);
         }
 
-        /// <summary>元素像素尺寸，需随布局更新（可用 LiquidGlassSurface.Install 自动同步）。</summary>
+        /// <summary>元素像素尺寸，需随布局更新（LiquidGlassSurface 会自动同步）。</summary>
         public Point Resolution
         {
             get => (Point)GetValue(ResolutionProperty);
@@ -79,10 +93,11 @@ namespace Pynelith.Glass.Effects
             set => SetValue(CornerRadiusProperty, value);
         }
 
-        public double EdgeWidth
+        /// <summary>边缘折射带宽度（像素）。</summary>
+        public double EdgeBand
         {
-            get => (double)GetValue(EdgeWidthProperty);
-            set => SetValue(EdgeWidthProperty, value);
+            get => (double)GetValue(EdgeBandProperty);
+            set => SetValue(EdgeBandProperty, value);
         }
 
         public double Refraction
@@ -91,10 +106,22 @@ namespace Pynelith.Glass.Effects
             set => SetValue(RefractionProperty, value);
         }
 
-        public double Highlight
+        public double BlurRadius
         {
-            get => (double)GetValue(HighlightProperty);
-            set => SetValue(HighlightProperty, value);
+            get => (double)GetValue(BlurRadiusProperty);
+            set => SetValue(BlurRadiusProperty, value);
+        }
+
+        public double Saturation
+        {
+            get => (double)GetValue(SaturationProperty);
+            set => SetValue(SaturationProperty, value);
+        }
+
+        public double Brightness
+        {
+            get => (double)GetValue(BrightnessProperty);
+            set => SetValue(BrightnessProperty, value);
         }
 
         public Color Tint
@@ -107,6 +134,12 @@ namespace Pynelith.Glass.Effects
         {
             get => (double)GetValue(TintOpacityProperty);
             set => SetValue(TintOpacityProperty, value);
+        }
+
+        public double Highlight
+        {
+            get => (double)GetValue(HighlightProperty);
+            set => SetValue(HighlightProperty, value);
         }
 
         private static PixelShader LoadShader()
