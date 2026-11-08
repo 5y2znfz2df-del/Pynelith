@@ -1,0 +1,49 @@
+# Visual Studio / .NET / WPF for Pynelith
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET Core
+artifacts/
+*.log
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/*
+!packages/build/
+
+# VS cache
+.vs/
+*.vsidx
+
+# IDE 本地缓存（Trae / VSCode）
+.vscode/
+.idea/
+*.code-workspace
+
+# OS 垃圾文件
+Thumbs.db
+.DS_Store
