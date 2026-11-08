@@ -5,6 +5,7 @@
         Width="800" Height="560"
         MinWidth="680" MinHeight="440"
         WindowStartupLocation="CenterScreen"
+        Topmost="True"
         Background="#1C1C1E"
         Foreground="#FFFFFFFF"
         UseLayoutRounding="True"
@@ -51,21 +52,21 @@
             </Setter>
         </Style>
 
-        <!-- 侧边栏条目 -->
-        <Style x:Key="SideItem" TargetType="ListBoxItem">
+        <!-- 侧边栏条目（Button：点击路由最可靠） -->
+        <Style x:Key="SideButton" TargetType="Button">
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Margin" Value="8,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd" CornerRadius="7" Padding="8,6" Background="Transparent">
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="7" Padding="8,6"
+                                Background="{TemplateBinding Background}">
                             <ContentPresenter/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBrush}"/>
-                            </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="#14FFFFFF"/>
                             </Trigger>
@@ -114,11 +115,7 @@
                     <TextBlock Text="搜索" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
                 </Border>
 
-                <ListBox x:Name="SideList"
-                         Background="Transparent"
-                         BorderThickness="0"
-                         ItemContainerStyle="{StaticResource SideItem}"
-                         SelectionChanged="OnSideChanged"/>
+                <StackPanel x:Name="SideStack"/>
             </DockPanel>
         </Border>
 

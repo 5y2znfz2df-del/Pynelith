@@ -12,12 +12,12 @@ namespace Pynelith.Island.Configuration
     public sealed class IslandConfig : INotifyPropertyChanged
     {
         private double _globalScale = 1.0;
-        private double _collapsedWidth = 240;
-        private double _collapsedHeight = 44;
-        private double _expandedWidth = 400;
-        private double _expandedHeight = 236;
+        private double _collapsedWidth = 128;
+        private double _collapsedHeight = 28;
+        private double _expandedWidth = 280;
+        private double _expandedHeight = 170;
         private double _screenOffsetX;
-        private double _screenOffsetY = 14;
+        private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
         private double _cornerRadius = 26;
         private int _animationDurationMs = 280;

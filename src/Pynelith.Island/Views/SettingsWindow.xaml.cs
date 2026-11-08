@@ -26,6 +26,9 @@ namespace Pynelith.Island.Views
         private readonly ConfigService _service;
         private readonly List<Action> _refreshers = new List<Action>();
         private readonly Dictionary<string, UIElement> _pages = new Dictionary<string, UIElement>();
+        private readonly Dictionary<string, Button> _sideButtons = new Dictionary<string, Button>();
+        private readonly Dictionary<string, string> _sideTitles = new Dictionary<string, string>();
+        private string _currentPage = string.Empty;
         private bool _loading;
 
         private IslandConfig Config => _service.Config;
@@ -47,7 +50,7 @@ namespace Pynelith.Island.Views
 
             _loading = false;
 
-            SideList.SelectedIndex = 0;
+            SelectPage("general");
         }
 
         #region 侧边栏
@@ -102,7 +105,17 @@ namespace Pynelith.Island.Views
                 row.Children.Add(icon);
                 row.Children.Add(label);
 
-                SideList.Items.Add(new ListBoxItem { Content = row, Tag = entry.Key });
+                var button = new Button
+                {
+                    Style = (Style)FindResource("SideButton"),
+                    Content = row,
+                    Tag = entry.Key,
+                };
+                button.Click += OnSideClick;
+
+                _sideButtons[entry.Key] = button;
+                _sideTitles[entry.Key] = entry.Title;
+                SideStack.Children.Add(button);
             }
         }
 
@@ -116,20 +129,33 @@ namespace Pynelith.Island.Views
                 new Point(0, 0),
                 new Point(1, 1));
 
-        private void OnSideChanged(object sender, SelectionChangedEventArgs e)
+        private void OnSideClick(object sender, RoutedEventArgs e)
         {
-            if (SideList.SelectedItem is not ListBoxItem item || item.Tag is not string key)
+            if (sender is Button button && button.Tag is string key)
+            {
+                SelectPage(key);
+            }
+        }
+
+        private void SelectPage(string key)
+        {
+            if (!_pages.ContainsKey(key) || _currentPage == key)
             {
                 return;
             }
 
-            PageHost.Children.Clear();
-            if (_pages.TryGetValue(key, out UIElement? page))
+            _currentPage = key;
+
+            foreach (var pair in _sideButtons)
             {
-                PageHost.Children.Add(page);
+                pair.Value.Background = pair.Key == key
+                    ? (Brush)FindResource("AccentBrush")
+                    : Brushes.Transparent;
             }
 
-            PageTitle.Text = ((TextBlock)((StackPanel)item.Content).Children[1]).Text;
+            PageHost.Children.Clear();
+            PageHost.Children.Add(_pages[key]);
+            PageTitle.Text = _sideTitles[key];
         }
 
         #endregion

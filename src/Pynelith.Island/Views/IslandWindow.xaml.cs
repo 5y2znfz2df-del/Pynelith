@@ -97,6 +97,7 @@ namespace Pynelith.Island.Views
             ApplyMorph(_p);
             UpdateTexts();
             UpdateLyric();
+            Reposition();
             _clockTimer.Start();
         }
 
@@ -401,6 +402,7 @@ namespace Pynelith.Island.Views
 
         #region 停靠定位与拖动
 
+        /// <summary>停靠：工作区顶部居中，再叠加配置偏移。</summary>
         private void Reposition()
         {
             Rect work = SystemParameters.WorkArea;
@@ -439,7 +441,8 @@ namespace Pynelith.Island.Views
             }
 
             Point current = e.GetPosition(this);
-            bool moved = Math.Abs(current.X - _pressPoint.X) > 4 || Math.Abs(current.Y - _pressPoint.Y) > 4;
+            // 阈值放宽：手部轻微抖动不应触发拖动，否则点击会把岛拖偏并写回偏移
+            bool moved = Math.Abs(current.X - _pressPoint.X) > 12 || Math.Abs(current.Y - _pressPoint.Y) > 12;
             if (!moved)
             {
                 return;
