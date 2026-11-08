@@ -5,6 +5,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>Pynelith.Glass.Demo</RootNamespace>
     <AssemblyName>Pynelith.Glass.Demo</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
