@@ -9,57 +9,72 @@ namespace Pynelith.Glass.Interop
     /// </summary>
     internal static class OsInfo
     {
-        [StructLayout(LayoutKind.Sequential)]
-        private struct OSVERSIONINFOEX
-        {
-            public int dwOSVersionInfoSize;
-            public int dwMajorVersion;
-            public int dwMinorVersion;
-            public int dwBuildNumber;
-            public int dwPlatformId;
-            public ushort wServicePackMajor;
-            public ushort wServicePackMinor;
-            public ushort wSuiteMask;
-            public byte wProductType;
-            public byte wReserved;
-        }
+        /// <summary>RTL_OSVERSIONINFOEXW 的完整大小（含 128 字符 CSD 串）。</summary>
+        private const int VersionInfoSize = 284;
 
         [DllImport("ntdll.dll", SetLastError = true)]
-        private static extern int RtlGetVersion(out OSVERSIONINFOEX version);
+        private static extern int RtlGetVersion(IntPtr versionInfo);
 
-        public static readonly int Build = DetectBuild();
+        private static readonly int _major;
+        private static readonly int _build;
 
-        /// <summary>Windows 11（major >= 11）。</summary>
-        public static bool IsWindows11 => DetectMajor() >= 11;
+        static OsInfo()
+        {
+            if (!TryReadNative(out _major, out _build))
+            {
+                var fallback = Environment.OSVersion.Version;
+                _major = fallback.Major;
+                _build = fallback.Build;
+            }
+        }
+
+        /// <summary>内核版本号（Win11 为 22000+）。</summary>
+        public static int Build => _build;
+
+        /// <summary>
+        /// Windows 11 判定。注意 Win11 的 MajorVersion 仍是 10，
+        /// 必须用 Build ≥ 22000 区分（Win10 10.0.1904x）。
+        /// </summary>
+        public static bool IsWindows11 => _major > 10 || (_major == 10 && _build >= 22000);
 
         /// <summary>Win11 22H2+：支持 DWMWA_SYSTEMBACKDROP_TYPE（Mica/Acrylic/Tabbed）。</summary>
         public static bool SupportsSystemBackdrop => IsWindows11 && Build >= 22621;
 
-        /// <summary>Win10 1703+：支持 Windows.UI.Composition 桌面目标与 HostBackdropBrush。</summary>
+        /// <summary>Win10 1703+：支持伴随窗口（WS_EX_NOREDIRECTIONBITMAP）背景模糊层。</summary>
         public static bool SupportsCompositionBackdrop => Build >= 15063;
 
-        private static int DetectBuild()
+        private static bool TryReadNative(out int major, out int build)
         {
-            return RawVersion().dwBuildNumber;
-        }
+            major = build = 0;
 
-        private static int DetectMajor()
-        {
-            return RawVersion().dwMajorVersion;
-        }
-
-        private static OSVERSIONINFOEX RawVersion()
-        {
-            var info = new OSVERSIONINFOEX { dwOSVersionInfoSize = Marshal.SizeOf<OSVERSIONINFOEX>() };
-            if (RtlGetVersion(out info) == 0)
+            IntPtr buffer = Marshal.AllocHGlobal(VersionInfoSize);
+            try
             {
-                return info;
-            }
+                // 必须先写入结构大小，否则 RtlGetVersion 直接失败。
+                for (int offset = 0; offset < VersionInfoSize; offset += 4)
+                {
+                    Marshal.WriteInt32(buffer, offset, 0);
+                }
 
-            var fallback = Environment.OSVersion.Version;
-            info.dwMajorVersion = fallback.Major;
-            info.dwBuildNumber = fallback.Build;
-            return info;
+                Marshal.WriteInt32(buffer, 0, VersionInfoSize);
+
+                if (RtlGetVersion(buffer) != 0)
+                {
+                    return false;
+                }
+
+                major = Marshal.ReadInt32(buffer, 4);
+                build = Marshal.ReadInt32(buffer, 12);
+                return major > 0;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
         }
     }
 }
