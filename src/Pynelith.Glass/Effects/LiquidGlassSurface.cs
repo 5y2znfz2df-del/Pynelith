@@ -1,7 +1,7 @@
 using System;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 
 namespace Pynelith.Glass.Effects
 {
@@ -9,7 +9,7 @@ namespace Pynelith.Glass.Effects
     /// 把 LiquidGlassEffect 安装到任意 FrameworkElement 并自动同步尺寸。
     /// UI 模块用法：
     /// <code>
-    /// var glassSurface = LiquidGlassSurface.Install(myIslandBorder, new LiquidGlassStyle { ... });
+    /// var glassSurface = LiquidGlassSurface.Install(myIslandBorder, new LiquidGlassSurface.LiquidGlassStyle { ... });
     /// </code>
     /// </summary>
     public sealed class LiquidGlassSurface : IDisposable
@@ -32,6 +32,9 @@ namespace Pynelith.Glass.Effects
             _target = target;
             _effect = new LiquidGlassEffect
             {
+                // WPF 采样器只接受 Effect.ImplicitInput 或 BitmapCacheBrush/VisualBrush/ImageBrush，
+                // 传 SolidColorBrush 会抛 ArgumentException，因此固定采样元素自身已渲染内容。
+                Input = ShaderEffect.ImplicitInput,
                 CornerRadius = style.CornerRadius,
                 EdgeWidth = style.EdgeWidth,
                 Refraction = style.Refraction,
@@ -41,21 +44,9 @@ namespace Pynelith.Glass.Effects
                 Resolution = new Point(Math.Max(1, target.ActualWidth), Math.Max(1, target.ActualHeight)),
             };
 
-            // 输入画刷：元素背景（未设置时给一个半透明底，保证效果可见）
-            _effect.Input = GetBackground(target) ?? new SolidColorBrush(Color.FromArgb(0x50, 0x18, 0x18, 0x1C));
-
             target.Effect = _effect;
             target.SizeChanged += OnTargetSizeChanged;
         }
-
-        /// <summary>从常见容器元素（Border/Panel/Control）读取背景画刷。</summary>
-        private static Brush? GetBackground(FrameworkElement target) => target switch
-        {
-            Border border => border.Background,
-            Panel panel => panel.Background,
-            Control control => control.Background,
-            _ => null,
-        };
 
         public static LiquidGlassSurface Install(FrameworkElement target, LiquidGlassStyle? style = null)
         {
