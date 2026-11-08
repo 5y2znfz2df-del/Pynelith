@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -29,43 +30,40 @@ namespace Pynelith.Glass.Effects
     /// </summary>
     public sealed class LiquidGlassSurface : IDisposable
     {
-        /// <summary>液态玻璃外观参数（默认值取自 WinIsland LiquidMaterial::island）。</summary>
+        /// <summary>液态玻璃外观参数（默认值取自 liquid-glass-rs 的番茄钟玻璃）。</summary>
         public sealed class LiquidGlassStyle
         {
-            /// <summary>连续圆角半径（DIP）。</summary>
-            public double CornerRadius { get; set; } = 22;
+            /// <summary>圆角半径（DIP）。</summary>
+            public double CornerRadius { get; set; } = 46;
 
-            /// <summary>边缘折射带宽度（DIP），越大"玻璃厚度"范围越宽。</summary>
-            public double BezelWidth { get; set; } = 18;
+            /// <summary>边缘折射带宽度（DIP），越大折射范围越宽。</summary>
+            public double BezelWidth { get; set; } = 26;
 
-            /// <summary>玻璃厚度（DIP），影响折射位移量。</summary>
-            public double Thickness { get; set; } = 14;
+            /// <summary>玻璃厚度（DIP），决定折射位移量。</summary>
+            public double Thickness { get; set; } = 34;
 
-            /// <summary>折射率，1.45 接近真实玻璃。</summary>
-            public double GlassIor { get; set; } = 1.45;
+            /// <summary>折射率，默认 1.42。</summary>
+            public double GlassIor { get; set; } = 1.42;
 
-            /// <summary>折射位移缩放。</summary>
-            public double DisplacementFactor { get; set; } = 1.1;
+            /// <summary>RGB 色散。</summary>
+            public double Dispersion { get; set; } = 0.05;
 
-            /// <summary>RGB 色散 0..0.5，边缘出现彩虹分离。</summary>
-            public double Dispersion { get; set; } = 0.08;
+            /// <summary>染色强度 0..1，黑玻璃约 0.70。</summary>
+            public double TintAmount { get; set; } = 0.70;
 
-            /// <summary>玻璃着色（仅 RGB 参与）。</summary>
-            public Color Tint { get; set; } = Color.FromRgb(10, 11, 15);
+            /// <summary>渐变染色上端（近黑）。</summary>
+            public Color TintTop { get; set; } = Color.FromRgb(5, 6, 8);
 
-            /// <summary>着色强度 0..1，0 为完全透明玻璃。</summary>
-            public double TintOpacity { get; set; } = 0.373;
+            /// <summary>渐变染色下端（偏蓝灰）。</summary>
+            public Color TintBottom { get; set; } = Color.FromRgb(24, 28, 36);
 
-            /// <summary>可读性补偿：背景越亮越加着色，避免文字看不清。</summary>
-            public double Legibility { get; set; } = 0.32;
+            /// <summary>抓屏余量（DIP）：边缘折射需要采到玻璃外侧的像素。</summary>
+            public double CaptureMargin { get; set; } = 120;
 
-            /// <summary>镜面光强度。</summary>
-            public double Highlight { get; set; } = 0.75;
+            /// <summary>光源是否跟随鼠标（跟手效果）。</summary>
+            public bool LightFollowsCursor { get; set; } = true;
 
-            /// <summary>背景预模糊半径（物理像素）。</summary>
-            public double BackgroundBlur { get; set; } = 6;
-
-            /// <summary>屏幕采样帧率，默认 30；跟随窗口移动足够，且开销很低。</summary>
+            /// <summary>屏幕采样帧率，默认 30；跟随窗口移动足够。</summary>
             public int FramesPerSecond { get; set; } = 30;
 
             /// <summary>关闭后不做屏幕采样（仅玻璃片外观，无背景折射）。</summary>
@@ -75,7 +73,7 @@ namespace Pynelith.Glass.Effects
             /// 是否把宿主窗口排除出截屏/录屏。
             /// 默认 true —— 让屏幕采样抓不到自己，避免自反馈。
             /// 若需要窗口出现在远程桌面/串流/录屏画面中，必须设为 false；
-            /// 此时屏幕采样会自动关闭（否则会抓到自己），退化为乳白玻璃外观。
+            /// 此时屏幕采样会自动关闭（否则会抓到自己），退化为半透明玻璃外观。
             /// </summary>
             public bool ExcludeFromCapture { get; set; } = true;
         }
@@ -109,7 +107,7 @@ namespace Pynelith.Glass.Effects
                     // 采样模式下这层只是占位；非采样模式（远程可见）用乳白渐变当玻璃本体。
                     Background = style.UseScreenBackdrop && style.ExcludeFromCapture
                         ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0))
-                        : CreateFrostedBrush(),
+                        : new SolidColorBrush(Color.FromArgb(0xD0, 0x0A, 0x0C, 0x10)),
                     IsHitTestVisible = false,
                 };
                 panel.Children.Insert(0, _injectedLayer);
@@ -128,32 +126,30 @@ namespace Pynelith.Glass.Effects
                 BezelWidth = style.BezelWidth,
                 Thickness = style.Thickness,
                 GlassIor = style.GlassIor,
-                DisplacementFactor = style.DisplacementFactor,
                 Dispersion = style.Dispersion,
-                Tint = style.Tint,
-                TintOpacity = style.TintOpacity,
-                Legibility = style.Legibility,
-                SpecularStrength = style.Highlight,
-                BackgroundBlur = style.BackgroundBlur,
+                TintAmount = style.TintAmount,
+                TintTop = style.TintTop,
+                TintBottom = style.TintBottom,
             };
 
             _surface.Effect = _effect;
             _surface.SizeChanged += OnTargetSizeChanged;
             _effect.UpdateLayout(_surface.ActualWidth, _surface.ActualHeight, GetDpiScale());
 
-            // 关闭截屏排除时不能做屏幕采样（会抓到自身形成反馈），走乳白玻璃外观。
+            // 关闭截屏排除时不能做屏幕采样（会抓到自身形成反馈），走半透明玻璃外观。
             if (style.UseScreenBackdrop && style.ExcludeFromCapture)
             {
                 AttachScreenBackdrop();
             }
             else
             {
-                // 无背景采样时，底色已是乳白渐变，改用淡白着色保持通透。
-                _effect.Tint = Colors.White;
-                _effect.TintOpacity = 0.05;
-                _effect.Legibility = 0.08;
-                _effect.StrokeOpacity = 0.55;
-                _effect.ShadowAlpha = 0.18;
+                // 无采样：用半透明深色底代替背景，保留轮廓与高光。
+                if (_injectedLayer != null)
+                {
+                    _injectedLayer.Background = new SolidColorBrush(Color.FromArgb(0xD0, 0x0A, 0x0C, 0x10));
+                }
+
+                _effect.TintAmount = 0.0;
                 SyncGeometry();
             }
         }
@@ -166,16 +162,6 @@ namespace Pynelith.Glass.Effects
             }
 
             return new LiquidGlassSurface(target, style ?? new LiquidGlassStyle());
-        }
-
-        /// <summary>非采样模式下的乳白玻璃底：左上偏亮、右下偏冷，避免变成死白。</summary>
-        private static Brush CreateFrostedBrush()
-        {
-            return new LinearGradientBrush(
-                Color.FromArgb(0xF0, 0xFC, 0xFD, 0xFF),
-                Color.FromArgb(0xC0, 0xE2, 0xE9, 0xF6),
-                new Point(0.15, 0),
-                new Point(0.85, 1));
         }
 
         /// <summary>动态调整效果参数（须在 UI 线程调用）。</summary>
@@ -235,11 +221,7 @@ namespace Pynelith.Glass.Effects
                 ApplyDisplayAffinity(hwnd);
             }
 
-            _sampler = new ScreenSampler
-            {
-                // DIP → 物理像素，再折算到 Skia 降采样后的目标分辨率
-                BlurSigma = (float)(_style.BackgroundBlur * GetDpiScale() / 2.0),
-            };
+            _sampler = new ScreenSampler();
             _effect.Input = _sampler.Brush;
 
             var interval = TimeSpan.FromMilliseconds(1000.0 / Math.Clamp(_style.FramesPerSecond, 1, 60));
@@ -320,15 +302,42 @@ namespace Pynelith.Glass.Effects
 
                 int width = Math.Max(1, (int)Math.Round(_surface.ActualWidth * dpi.DpiScaleX));
                 int height = Math.Max(1, (int)Math.Round(_surface.ActualHeight * dpi.DpiScaleY));
+                int margin = Math.Max(1, (int)Math.Round(_style.CaptureMargin * dpi.DpiScaleX));
 
+                // 四周多抓一圈：边缘折射要采到玻璃外侧的像素，窗口移动时也不会出现错位切片。
                 _screenBackdropActive = _sampler.Capture(
-                    (int)Math.Round(origin.X), (int)Math.Round(origin.Y), width, height);
+                    (int)Math.Round(origin.X) - margin,
+                    (int)Math.Round(origin.Y) - margin,
+                    width + margin * 2,
+                    height + margin * 2);
+
+                if (_screenBackdropActive)
+                {
+                    _effect.BackdropOffset = new Point(margin, margin);
+                    _effect.BackdropSize = new Point(width + margin * 2, height + margin * 2);
+                }
+
+                UpdateLightAngle();
             }
             catch (InvalidOperationException)
             {
                 // 元素已被移出可视化树，停止采样。
                 _timer?.Stop();
             }
+        }
+
+        /// <summary>光源方位 = 光标相对玻璃中心的方位角（跟手高光）。</summary>
+        private void UpdateLightAngle()
+        {
+            if (!_style.LightFollowsCursor)
+            {
+                return;
+            }
+
+            Point cursor = Mouse.GetPosition(_surface);
+            double dx = cursor.X - _surface.ActualWidth * 0.5;
+            double dy = cursor.Y - _surface.ActualHeight * 0.5;
+            _effect.LightAngle = Math.Atan2(dy, dx);
         }
 
         #endregion
