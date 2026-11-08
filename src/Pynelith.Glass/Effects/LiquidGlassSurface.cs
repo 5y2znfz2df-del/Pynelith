@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -23,6 +24,8 @@ namespace Pynelith.Glass.Effects
     /// 4. 采样不可用时自动降级为「元素自身内容 + 高光/亮边」的玻璃片效果。
     ///
     /// 注意：宿主窗口需 <c>AllowsTransparency="True"</c> 才能让圆角外的桌面透出。
+    /// 传入 Panel（Grid/Canvas）时，模块会在其底层注入玻璃层，原有子元素照常显示在玻璃之上；
+    /// 传入其他元素时，该元素自身的绘制内容会被玻璃替换（仅剩玻璃外观）。
     /// </summary>
     public sealed class LiquidGlassSurface : IDisposable
     {
@@ -64,6 +67,8 @@ namespace Pynelith.Glass.Effects
         }
 
         private readonly FrameworkElement _target;
+        private readonly FrameworkElement _surface;
+        private readonly Border? _injectedLayer;
         private readonly LiquidGlassEffect _effect;
         private readonly LiquidGlassStyle _style;
 
@@ -79,6 +84,25 @@ namespace Pynelith.Glass.Effects
             _target = target;
             _style = style;
 
+            // ShaderEffect 会用自身输入替换元素的全部绘制内容，
+            // 因此当目标是面板（Grid/Canvas 等）时，在底层插入一个专用玻璃层，
+            // 面板原有的子元素继续显示在玻璃之上。
+            if (target is Panel panel)
+            {
+                _injectedLayer = new Border
+                {
+                    // 必须有实际绘制，否则 WPF 不会执行 Effect
+                    Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
+                    IsHitTestVisible = false,
+                };
+                panel.Children.Insert(0, _injectedLayer);
+                _surface = _injectedLayer;
+            }
+            else
+            {
+                _surface = target;
+            }
+
             _effect = new LiquidGlassEffect
             {
                 // 采样器默认先用元素自身内容；启用屏幕采样后替换为 ImageBrush。
@@ -92,11 +116,11 @@ namespace Pynelith.Glass.Effects
                 Tint = style.Tint,
                 TintOpacity = style.TintOpacity,
                 Highlight = style.Highlight,
-                Resolution = new Point(Math.Max(1, target.ActualWidth), Math.Max(1, target.ActualHeight)),
+                Resolution = new Point(Math.Max(1, _surface.ActualWidth), Math.Max(1, _surface.ActualHeight)),
             };
 
-            target.Effect = _effect;
-            target.SizeChanged += OnTargetSizeChanged;
+            _surface.Effect = _effect;
+            _surface.SizeChanged += OnTargetSizeChanged;
 
             if (style.UseScreenBackdrop)
             {
@@ -239,18 +263,18 @@ namespace Pynelith.Glass.Effects
 
         private void OnSampleTick(object? sender, EventArgs e)
         {
-            if (_disposed || _sampler == null || _target.ActualWidth <= 0 || _target.ActualHeight <= 0)
+            if (_disposed || _sampler == null || _surface.ActualWidth <= 0 || _surface.ActualHeight <= 0)
             {
                 return;
             }
 
             try
             {
-                var dpi = VisualTreeHelper.GetDpi(_target);
-                Point origin = _target.PointToScreen(new Point(0, 0));
+                var dpi = VisualTreeHelper.GetDpi(_surface);
+                Point origin = _surface.PointToScreen(new Point(0, 0));
 
-                int width = Math.Max(1, (int)Math.Round(_target.ActualWidth * dpi.DpiScaleX));
-                int height = Math.Max(1, (int)Math.Round(_target.ActualHeight * dpi.DpiScaleY));
+                int width = Math.Max(1, (int)Math.Round(_surface.ActualWidth * dpi.DpiScaleX));
+                int height = Math.Max(1, (int)Math.Round(_surface.ActualHeight * dpi.DpiScaleY));
 
                 _screenBackdropActive = _sampler.Capture(
                     (int)Math.Round(origin.X), (int)Math.Round(origin.Y), width, height);
@@ -269,8 +293,8 @@ namespace Pynelith.Glass.Effects
         private void SyncResolution()
         {
             _effect.Resolution = new Point(
-                Math.Max(1, _target.ActualWidth),
-                Math.Max(1, _target.ActualHeight));
+                Math.Max(1, _surface.ActualWidth),
+                Math.Max(1, _surface.ActualHeight));
         }
 
         public void Dispose()
@@ -282,8 +306,13 @@ namespace Pynelith.Glass.Effects
 
             _disposed = true;
 
-            _target.SizeChanged -= OnTargetSizeChanged;
+            _surface.SizeChanged -= OnTargetSizeChanged;
             _target.Loaded -= OnTargetLoaded;
+
+            if (_injectedLayer != null && _target is Panel panel)
+            {
+                panel.Children.Remove(_injectedLayer);
+            }
 
             if (_timer != null)
             {
@@ -311,9 +340,9 @@ namespace Pynelith.Glass.Effects
             _sampler?.Dispose();
             _sampler = null;
 
-            if (ReferenceEquals(_target.Effect, _effect))
+            if (ReferenceEquals(_surface.Effect, _effect))
             {
-                _target.Effect = null;
+                _surface.Effect = null;
             }
         }
     }
