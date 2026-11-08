@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "demo", "demo", "{98D0C1A8-F
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pynelith.Glass.Demo", "demo\Pynelith.Glass.Demo\Pynelith.Glass.Demo.csproj", "{B1D5D2F3-2A61-484E-B5B4-EA34412C08C5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pynelith.Island", "src\Pynelith.Island\Pynelith.Island.csproj", "{2010D0B9-BD6F-4055-9A03-C3009AE09D46}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{B1D5D2F3-2A61-484E-B5B4-EA34412C08C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B1D5D2F3-2A61-484E-B5B4-EA34412C08C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B1D5D2F3-2A61-484E-B5B4-EA34412C08C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2010D0B9-BD6F-4055-9A03-C3009AE09D46}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2010D0B9-BD6F-4055-9A03-C3009AE09D46}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2010D0B9-BD6F-4055-9A03-C3009AE09D46}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2010D0B9-BD6F-4055-9A03-C3009AE09D46}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F8706AA2-A5F4-4A30-AD07-FD46B1959C17} = {31AAF1E4-89F6-4EF8-8BDD-F938454EDCFC}
 		{B1D5D2F3-2A61-484E-B5B4-EA34412C08C5} = {98D0C1A8-FCAA-4409-8D23-BD750FED7FBB}
+		{2010D0B9-BD6F-4055-9A03-C3009AE09D46} = {31AAF1E4-89F6-4EF8-8BDD-F938454EDCFC}
 	EndGlobalSection
 EndGlobal

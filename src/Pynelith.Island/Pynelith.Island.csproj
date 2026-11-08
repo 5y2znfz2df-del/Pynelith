@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Pynelith.Island</RootNamespace>
+    <AssemblyName>Pynelith.Island</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Description>灵动岛本体模块：悬浮动态岛、停靠定位、展开/收起动画、设置窗口与 JSON 配置（玻璃效果全部委托 Pynelith.Glass）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 渲染能力全部来自渲染模块的公开门面，本模块不引用任何渲染内部实现 -->
+    <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
+  </ItemGroup>
+
+</Project>
