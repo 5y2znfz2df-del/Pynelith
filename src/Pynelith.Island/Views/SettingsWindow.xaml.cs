@@ -7,6 +7,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using Pynelith.Island.Configuration;
+using Pynelith.Island.Services;
 
 namespace Pynelith.Island.Views
 {
@@ -207,7 +208,28 @@ namespace Pynelith.Island.Views
             var takeover = NewGroup(page, "接管");
             AddToggle(takeover, "接管全部系统通知",
                 () => Config.TakeoverNotifications, v => Config.TakeoverNotifications = v);
-            AddNote(takeover, "接管状态", "开启后岛内展示系统通知并撤下原生 Toast");
+            AddNote(takeover, "接管状态", SystemNotificationBridge.Status);
+
+            var link = new TextBlock
+            {
+                Text = "未授权？点此打开「系统设置 → 通知 → 通知访问」允许 Pynelith",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0x0A, 0x84, 0xFF)),
+                Cursor = Cursors.Hand,
+                Margin = new Thickness(14, 2, 14, 10),
+            };
+            link.MouseLeftButtonUp += (_, _) =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true });
+                }
+                catch (Exception)
+                {
+                    // 打不开设置页时忽略。
+                }
+            };
+            takeover.Children.Add(link);
 
             var display = NewGroup(page, "展示");
             AddStepper(display, "通知停留 (ms)", 1000, 15000, 500, 0,

@@ -39,19 +39,39 @@ namespace Pynelith.Island.Services
         private readonly DispatcherTimer _lyricTimer;
         private int _nextNotification;
         private int _nextLyric;
+        private bool _notificationsEnabled;
         private bool _disposed;
 
-        public MockFeed(IslandConfig config)
+        public MockFeed(IslandConfig config, bool notificationsEnabled)
         {
             _config = config;
+            _notificationsEnabled = notificationsEnabled;
 
-            // 先铺两条内容，界面一打开就有东西可看。
-            Push(Pool[0]);
-            Push(Pool[1]);
+            // 先铺两条内容，界面一打开就有东西可看（接管系统通知时关闭模拟通知）。
+            if (_notificationsEnabled)
+            {
+                Push(Pool[0]);
+                Push(Pool[1]);
+            }
 
             _arrivalTimer = CreateTimer(TimeSpan.FromSeconds(6), OnArrivalTick);
             _sweepTimer = CreateTimer(TimeSpan.FromSeconds(1), OnSweepTick);
             _lyricTimer = CreateTimer(TimeSpan.FromSeconds(3.5), OnLyricTick);
+        }
+
+        /// <summary>切换模拟通知（系统通知接管成功后关闭模拟，避免混显）。</summary>
+        public void SetNotificationsEnabled(bool enabled)
+        {
+            if (_notificationsEnabled == enabled)
+            {
+                return;
+            }
+
+            _notificationsEnabled = enabled;
+            if (!enabled)
+            {
+                Notifications.Clear();
+            }
         }
 
         /// <summary>当前通知列表，最新的在最前。</summary>
@@ -70,6 +90,11 @@ namespace Pynelith.Island.Services
 
         private void OnArrivalTick(object? sender, EventArgs e)
         {
+            if (!_notificationsEnabled)
+            {
+                return;
+            }
+
             var candidate = Pool[_nextNotification++ % Pool.Length];
 
             if (IsBlacklisted(candidate.App))
@@ -114,7 +139,7 @@ namespace Pynelith.Island.Services
             }
         }
 
-        private bool IsBlacklisted(string appName)
+        public bool IsBlacklisted(string appName)
         {
             List<string> blacklist = _config.NotificationBlacklist;
             return blacklist != null

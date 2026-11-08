@@ -71,10 +71,12 @@ namespace Pynelith.Island.Views
                 FramesPerSecond = 30,
             });
 
-            // ---- 模拟数据 ----
-            _feed = new MockFeed(Config);
+            // ---- 模拟数据（接管系统通知时关闭模拟通知） ----
+            _feed = new MockFeed(Config, notificationsEnabled: !Config.TakeoverNotifications);
             NotificationList.ItemsSource = _feed.Notifications;
             ExpandedView.DataContext = _feed.Track;
+
+            SetupBridge();
 
             _clockTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
@@ -102,11 +104,100 @@ namespace Pynelith.Island.Views
 
         private void OnConfigChanged(object? sender, EventArgs e)
         {
+            if (_takeoverActive != Config.TakeoverNotifications)
+            {
+                SetupBridge();
+            }
+
             ApplyWindowSize();
             ApplyMorph(_p);
             UpdateTexts();
             Reposition();
         }
+
+        #region 系统通知接管
+
+        private static readonly string[] AccentPalette = { "#7BE0FF", "#4ADE80", "#60A5FA", "#FBBF24", "#F87171", "#C084FC" };
+
+        private SystemNotificationBridge? _bridge;
+        private bool _takeoverActive;
+
+        /// <summary>按配置创建/重建通知桥；不可用时回退模拟通知。</summary>
+        private void SetupBridge()
+        {
+            _takeoverActive = Config.TakeoverNotifications;
+
+            _bridge?.Dispose();
+            _bridge = null;
+
+            if (!_takeoverActive)
+            {
+                _feed.SetNotificationsEnabled(true);
+                return;
+            }
+
+            _bridge = SystemNotificationBridge.TryCreate(true);
+            if (_bridge == null)
+            {
+                _feed.SetNotificationsEnabled(true);
+                return;
+            }
+
+            _bridge.Received += OnSystemNotification;
+            _ = InitializeBridgeAsync(_bridge);
+        }
+
+        private async System.Threading.Tasks.Task InitializeBridgeAsync(SystemNotificationBridge bridge)
+        {
+            bool allowed = await bridge.EnsureAccessAsync();
+
+            if (_bridge != bridge)
+            {
+                return;
+            }
+
+            if (allowed)
+            {
+                _feed.SetNotificationsEnabled(false);
+                bridge.Start();
+            }
+            else
+            {
+                // 未授权：先用模拟通知保证界面可用
+                _feed.SetNotificationsEnabled(true);
+            }
+        }
+
+        private void OnSystemNotification(string app, string body)
+        {
+            if (_feed.IsBlacklisted(app))
+            {
+                return;
+            }
+
+            _feed.Notifications.Insert(0, new Models.NotificationItem
+            {
+                AppName = app,
+                Title = body,
+                Accent = AccentFor(app),
+                CreatedAt = DateTime.Now,
+            });
+
+            while (_feed.Notifications.Count > 3)
+            {
+                _feed.Notifications.RemoveAt(_feed.Notifications.Count - 1);
+            }
+
+            UpdateTexts();
+        }
+
+        private static Brush AccentFor(string app)
+        {
+            int index = Math.Abs(app.GetHashCode(StringComparison.Ordinal)) % AccentPalette.Length;
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(AccentPalette[index]));
+        }
+
+        #endregion
 
         /// <summary>窗口固定为展开尺寸；胶囊在窗口内顶部居中，因此收起态也天然居中。</summary>
         private void ApplyWindowSize()
@@ -427,6 +518,7 @@ namespace Pynelith.Island.Views
             _service.Changed -= OnConfigChanged;
 
             _feed.Dispose();
+            _bridge?.Dispose();
             _glass.Dispose();
 
             base.OnClosed(e);

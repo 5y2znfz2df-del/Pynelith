@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
+    <!-- 需要 WinRT 投影（UserNotificationListener 接管系统通知） -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <RootNamespace>Pynelith.Island</RootNamespace>
     <AssemblyName>Pynelith.Island</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
