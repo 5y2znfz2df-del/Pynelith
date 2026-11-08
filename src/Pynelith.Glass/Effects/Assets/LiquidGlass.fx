@@ -39,22 +39,12 @@ float sdRoundRect(float2 p, float4 s, float2 c, out float2 g)
     return max(q.x, q.y) - c.x;
 }
 
-// 预模糊背景采样（对应 WinIsland 的 backdrop.blurred）
+// 背景采样：WinIsland 的 backdrop 是已模糊的贴图（HostBackdrop + D2D GaussianBlur），
+// 这里由 Skia 预先生成模糊贴图，着色器只做一次纹理采样。
 float3 Backdrop(float2 p)
 {
     float2 uv = p / Resolution + 0.5;
-    float2 o = Extra2.x / Resolution;
-
-    float3 c = tex2D(InputSampler, uv).rgb * 0.25;
-    c += (tex2D(InputSampler, uv + float2( o.x, 0.0)).rgb
-        + tex2D(InputSampler, uv + float2(-o.x, 0.0)).rgb
-        + tex2D(InputSampler, uv + float2(0.0,  o.y)).rgb
-        + tex2D(InputSampler, uv + float2(0.0, -o.y)).rgb) * 0.125;
-    c += (tex2D(InputSampler, uv + float2( o.x,  o.y)).rgb
-        + tex2D(InputSampler, uv + float2( o.x, -o.y)).rgb
-        + tex2D(InputSampler, uv + float2(-o.x,  o.y)).rgb
-        + tex2D(InputSampler, uv + float2(-o.x, -o.y)).rgb) * 0.0625;
-    return c;
+    return tex2D(InputSampler, uv).rgb;
 }
 
 // 外描边 + 投影（在填充区域之外合成）

@@ -3,19 +3,25 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Pynelith.Glass.Interop;
+using SkiaSharp;
 
 namespace Pynelith.Glass.Backdrop
 {
     /// <summary>
-    /// 屏幕背景采样器：用 GDI BitBlt 抓取指定屏幕区域，写入可复用的 WriteableBitmap。
-    /// 这是液态玻璃"真实折射"的前提 —— 着色器必须拿到窗口背后的真实像素，
-    /// 才能做出苹果风格的边缘透镜与背景透射（系统 Acrylic 只能给出灰雾，无法折射）。
+    /// 背景采样器：GDI BitBlt 抓取屏幕区域，再用 Skia 做降采样高斯模糊，
+    /// 生成液态玻璃所需的预模糊背景贴图。
     ///
-    /// 性能：复用 DIB 段与 DIB DC，每帧仅一次内存拷贝（约 4 字节/像素），
-    /// 由 WPF 以 GPU 纹理上传，无每帧分配。
+    /// 对应 WinIsland 的 backdrop.blurred：那边用 HostBackdropBrush + D2D GaussianBlur，
+    /// 这里用 Skia 的 ImageFilter 做等价处理（结果同样是"已模糊的背景位图"）。
+    ///
+    /// 性能：复用 DIB 段与输出位图，模糊在降采样后的低分辨率上进行；
+    /// WPF 负责把结果拉到元素尺寸（等价 WinIsland 的 blur_scale 采样）。
     /// </summary>
     internal sealed class ScreenSampler : IDisposable
     {
+        /// <summary>降采样倍数，越大越省 CPU、越柔和。</summary>
+        private const int Downsample = 2;
+
         private IntPtr _screenDc;
         private IntPtr _memDc;
         private IntPtr _dib;
@@ -23,6 +29,11 @@ namespace Pynelith.Glass.Backdrop
         private IntPtr _bits;
 
         private WriteableBitmap? _bitmap;
+        private SKBitmap? _skTarget;
+        private SKCanvas? _skCanvas;
+        private SKImageFilter? _blurFilter;
+        private float _sigma = 3f;
+
         private int _width;
         private int _height;
         private bool _disposed;
@@ -30,10 +41,26 @@ namespace Pynelith.Glass.Backdrop
         /// <summary>可直接作为 ShaderEffect 采样器输入的画刷（图像随采样更新）。</summary>
         public ImageBrush Brush { get; } = new ImageBrush { Stretch = Stretch.Fill };
 
-        public WriteableBitmap? Bitmap => _bitmap;
+        /// <summary>模糊强度（目标像素的 sigma），改变后下一帧生效。</summary>
+        public float BlurSigma
+        {
+            get => _sigma;
+            set
+            {
+                float v = Math.Max(0f, value);
+                if (Math.Abs(v - _sigma) < 0.01f)
+                {
+                    return;
+                }
+
+                _sigma = v;
+                _blurFilter?.Dispose();
+                _blurFilter = null;
+            }
+        }
 
         /// <summary>
-        /// 抓取屏幕物理像素区域。坐标须为屏幕设备像素（与 GetWindowRect 一致）。
+        /// 抓取屏幕物理像素区域并生成模糊背景。坐标须为屏幕设备像素。
         /// 返回 false 表示抓取失败（保持上一帧内容）。
         /// </summary>
         public bool Capture(int screenX, int screenY, int width, int height)
@@ -57,22 +84,45 @@ namespace Pynelith.Glass.Backdrop
                 }
             }
 
-            // CAPTUREBLT 让分层窗口（含本进程 WPF 窗口）也参与合成；本窗口已被
-            // WDA_EXCLUDEFROMCAPTURE 排除，因此不会采样到自身。
             if (!NativeMethods.BitBlt(_memDc, 0, 0, width, height, _screenDc, screenX, screenY,
                                       NativeMethods.SRCCOPY | NativeMethods.CAPTUREBLT))
             {
                 return false;
             }
 
-            int stride = width * 4;
-            _bitmap!.WritePixels(new Int32Rect(0, 0, width, height), _bits, stride * height, stride);
+            BlurToTarget(width, height);
+
+            int stride = _width * 4;
+            _bitmap!.WritePixels(new Int32Rect(0, 0, _width, _height), _skTarget!.GetPixels(), stride * _height, stride);
             return true;
+        }
+
+        /// <summary>用 Skia 把 DIB 内容降采样并高斯模糊到目标位图。</summary>
+        private void BlurToTarget(int sourceWidth, int sourceHeight)
+        {
+            var info = new SKImageInfo(sourceWidth, sourceHeight, SKColorType.Bgra8888, SKAlphaType.Opaque);
+            using var source = new SKBitmap();
+            if (!source.InstallPixels(info, _bits, sourceWidth * 4))
+            {
+                return;
+            }
+
+            using var image = SKImage.FromBitmap(source);
+            _blurFilter ??= SKImageFilter.CreateBlur(_sigma, _sigma);
+
+            using var paint = new SKPaint { ImageFilter = _blurFilter, IsAntialias = true };
+            _skCanvas!.Clear(SKColors.Black);
+            _skCanvas.DrawImage(
+                image,
+                SKRect.Create(_width, _height),
+                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None),
+                paint);
+            _skCanvas.Flush();
         }
 
         private bool EnsureBuffers(int width, int height)
         {
-            if (_bitmap != null && _width == width && _height == height)
+            if (_bitmap != null && _width == Math.Max(1, width / Downsample) && _height == Math.Max(1, height / Downsample))
             {
                 return true;
             }
@@ -83,7 +133,7 @@ namespace Pynelith.Glass.Backdrop
             {
                 biSize = 40,
                 biWidth = width,
-                biHeight = -height, // 负高度 = 自上而下，与 WPF 位图行序一致
+                biHeight = -height,
                 biPlanes = 1,
                 biBitCount = 32,
                 biCompression = (int)NativeMethods.BI_RGB,
@@ -108,15 +158,25 @@ namespace Pynelith.Glass.Backdrop
 
             _oldDib = NativeMethods.SelectObject(_memDc, _dib);
 
-            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
-            _width = width;
-            _height = height;
+            _width = Math.Max(1, width / Downsample);
+            _height = Math.Max(1, height / Downsample);
+
+            _skTarget = new SKBitmap(new SKImageInfo(_width, _height, SKColorType.Bgra8888, SKAlphaType.Opaque));
+            _skCanvas = new SKCanvas(_skTarget);
+
+            _bitmap = new WriteableBitmap(_width, _height, 96, 96, PixelFormats.Bgra32, null);
             Brush.ImageSource = _bitmap;
             return true;
         }
 
         private void ReleaseBuffers()
         {
+            _skCanvas?.Dispose();
+            _skCanvas = null;
+
+            _skTarget?.Dispose();
+            _skTarget = null;
+
             if (_memDc != IntPtr.Zero && _oldDib != IntPtr.Zero)
             {
                 NativeMethods.SelectObject(_memDc, _oldDib);
@@ -156,6 +216,9 @@ namespace Pynelith.Glass.Backdrop
             }
 
             ReleaseBuffers();
+
+            _blurFilter?.Dispose();
+            _blurFilter = null;
         }
     }
 }

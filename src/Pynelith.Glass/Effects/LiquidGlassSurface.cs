@@ -235,7 +235,11 @@ namespace Pynelith.Glass.Effects
                 ApplyDisplayAffinity(hwnd);
             }
 
-            _sampler = new ScreenSampler();
+            _sampler = new ScreenSampler
+            {
+                // DIP → 物理像素，再折算到 Skia 降采样后的目标分辨率
+                BlurSigma = (float)(_style.BackgroundBlur * GetDpiScale() / 2.0),
+            };
             _effect.Input = _sampler.Brush;
 
             var interval = TimeSpan.FromMilliseconds(1000.0 / Math.Clamp(_style.FramesPerSecond, 1, 60));

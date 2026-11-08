@@ -12,4 +12,9 @@
     <Resource Include="Effects\Assets\LiquidGlass.gshader" Condition="Exists('Effects\Assets\LiquidGlass.gshader')" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.0" />
+  </ItemGroup>
+
 </Project>
