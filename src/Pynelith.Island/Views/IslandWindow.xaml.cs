@@ -238,6 +238,21 @@ namespace Pynelith.Island.Views
             SetExpanded(false, animate: true);
         }
 
+        private SettingsWindow? _settingsWindow;
+
+        private void OnOpenSettings(object sender, RoutedEventArgs e)
+        {
+            if (_settingsWindow != null)
+            {
+                _settingsWindow.Activate();
+                return;
+            }
+
+            _settingsWindow = new SettingsWindow(_service);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow.Show();
+        }
+
         #endregion
 
         #region 停靠定位与拖动

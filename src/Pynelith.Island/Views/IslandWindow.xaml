@@ -93,10 +93,16 @@
 
                     <DockPanel Grid.Row="0">
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button x:Name="SettingsButton"
+                                    Style="{StaticResource IconButton}"
+                                    Content="⚙"
+                                    ToolTip="设置"
+                                    Click="OnOpenSettings"/>
                             <Button x:Name="CollapseButton"
                                     Style="{StaticResource IconButton}"
                                     Content="⌃"
                                     ToolTip="收起"
+                                    Margin="6,0,0,0"
                                     Click="OnCollapseClick"/>
                         </StackPanel>
 
