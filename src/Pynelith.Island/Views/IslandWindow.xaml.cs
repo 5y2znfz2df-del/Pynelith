@@ -402,14 +402,15 @@ namespace Pynelith.Island.Views
 
         #region 停靠定位与拖动
 
-        /// <summary>停靠：工作区顶部居中，再叠加配置偏移。</summary>
+        /// <summary>停靠：水平居中于工作区，垂直贴屏幕物理顶（参考图贴顶），再叠加配置偏移。</summary>
         private void Reposition()
         {
             Rect work = SystemParameters.WorkArea;
             double centeredLeft = work.Left + (work.Width - Width) * 0.5;
 
             Left = Math.Round(centeredLeft + Config.ScreenOffsetX);
-            Top = Math.Round(work.Top + Config.ScreenOffsetY);
+            // 贴屏幕物理顶（y=0，压住顶部任务栏，与参考图一致）；不用 work.Top，避免被推下去
+            Top = Math.Round(Config.ScreenOffsetY);
         }
 
         private void PersistScreenOffset()
@@ -418,7 +419,7 @@ namespace Pynelith.Island.Views
             double centeredLeft = work.Left + (work.Width - Width) * 0.5;
 
             Config.ScreenOffsetX = Math.Round(Left - centeredLeft);
-            Config.ScreenOffsetY = Math.Round(Top - work.Top);
+            Config.ScreenOffsetY = Math.Round(Top);
         }
 
         private void OnIslandMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
