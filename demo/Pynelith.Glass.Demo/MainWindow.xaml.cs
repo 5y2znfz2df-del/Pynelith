@@ -29,11 +29,6 @@ namespace Pynelith.Glass.Demo
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            // 岛形窗口定位：工作区顶部居中
-            var work = SystemParameters.WorkArea;
-            Left = work.Left + (work.Width - Width) / 2;
-            Top = work.Top + 16;
-
             // 前景液态玻璃着色器（折射/高光/边缘）
             _liquid = LiquidGlassSurface.Install(Island, new LiquidGlassSurface.LiquidGlassStyle
             {

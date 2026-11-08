@@ -3,11 +3,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Pynelith Glass Demo"
-        Width="640" Height="150"
+        Height="150"
+        SizeToContent="Width"
         WindowStyle="None"
         ResizeMode="NoResize"
         AllowsTransparency="False"
-        WindowStartupLocation="Manual"
+        WindowStartupLocation="CenterScreen"
         Background="Transparent"
         Topmost="True">
 
