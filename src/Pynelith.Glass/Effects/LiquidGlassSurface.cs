@@ -29,41 +29,55 @@ namespace Pynelith.Glass.Effects
     /// </summary>
     public sealed class LiquidGlassSurface : IDisposable
     {
-        /// <summary>液态玻璃外观参数。</summary>
+        /// <summary>液态玻璃外观参数（默认值取自 WinIsland LiquidMaterial::island）。</summary>
         public sealed class LiquidGlassStyle
         {
-            /// <summary>圆角半径（DIP），与元素尺寸共同决定外形。</summary>
-            public double CornerRadius { get; set; } = 20;
+            /// <summary>连续圆角半径（DIP）。</summary>
+            public double CornerRadius { get; set; } = 22;
 
-            /// <summary>边缘折射带宽度（DIP），越大"玻璃厚度"越明显。</summary>
-            public double EdgeBand { get; set; } = 18;
+            /// <summary>边缘折射带宽度（DIP），越大"玻璃厚度"范围越宽。</summary>
+            public double BezelWidth { get; set; } = 18;
 
-            /// <summary>折射强度 0..1，苹果玻璃约 0.7~1.0。</summary>
-            public double Refraction { get; set; } = 0.85;
+            /// <summary>玻璃厚度（DIP），影响折射位移量。</summary>
+            public double Thickness { get; set; } = 14;
 
-            /// <summary>背景模糊半径（DIP）。液态玻璃只需轻模糊，背景仍应可辨认。</summary>
-            public double BlurRadius { get; set; } = 3.5;
+            /// <summary>折射率，1.45 接近真实玻璃。</summary>
+            public double GlassIor { get; set; } = 1.45;
 
-            /// <summary>背景饱和度倍数，&gt;1 提升色彩（苹果玻璃的关键特征）。</summary>
-            public double Saturation { get; set; } = 1.55;
+            /// <summary>折射位移缩放。</summary>
+            public double DisplacementFactor { get; set; } = 1.1;
 
-            /// <summary>背景亮度倍数。</summary>
-            public double Brightness { get; set; } = 1.06;
+            /// <summary>RGB 色散 0..0.5，边缘出现彩虹分离。</summary>
+            public double Dispersion { get; set; } = 0.08;
 
-            /// <summary>玻璃着色。</summary>
-            public Color Tint { get; set; } = Color.FromRgb(0xF2, 0xF6, 0xFF);
+            /// <summary>玻璃着色（仅 RGB 参与）。</summary>
+            public Color Tint { get; set; } = Color.FromRgb(10, 11, 15);
 
-            /// <summary>着色不透明度，液态玻璃应极淡（0.03~0.10）。</summary>
-            public double TintOpacity { get; set; } = 0.06;
+            /// <summary>着色强度 0..1，0 为完全透明玻璃。</summary>
+            public double TintOpacity { get; set; } = 0.373;
 
-            /// <summary>高光强度（镜面亮边 / 边缘内发光 / 顶部柔光）。</summary>
-            public double Highlight { get; set; } = 0.85;
+            /// <summary>可读性补偿：背景越亮越加着色，避免文字看不清。</summary>
+            public double Legibility { get; set; } = 0.32;
+
+            /// <summary>镜面光强度。</summary>
+            public double Highlight { get; set; } = 0.75;
+
+            /// <summary>背景预模糊半径（物理像素）。</summary>
+            public double BackgroundBlur { get; set; } = 6;
 
             /// <summary>屏幕采样帧率，默认 30；跟随窗口移动足够，且开销很低。</summary>
             public int FramesPerSecond { get; set; } = 30;
 
             /// <summary>关闭后不做屏幕采样（仅玻璃片外观，无背景折射）。</summary>
             public bool UseScreenBackdrop { get; set; } = true;
+
+            /// <summary>
+            /// 是否把宿主窗口排除出截屏/录屏。
+            /// 默认 true —— 让屏幕采样抓不到自己，避免自反馈。
+            /// 若需要窗口出现在远程桌面/串流/录屏画面中，必须设为 false；
+            /// 此时屏幕采样会自动关闭（否则会抓到自己），退化为乳白玻璃外观。
+            /// </summary>
+            public bool ExcludeFromCapture { get; set; } = true;
         }
 
         private readonly FrameworkElement _target;
@@ -91,8 +105,11 @@ namespace Pynelith.Glass.Effects
             {
                 _injectedLayer = new Border
                 {
-                    // 必须有实际绘制，否则 WPF 不会执行 Effect
-                    Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
+                    // 必须有实际绘制，否则 WPF 不会执行 Effect。
+                    // 采样模式下这层只是占位；非采样模式（远程可见）用乳白渐变当玻璃本体。
+                    Background = style.UseScreenBackdrop && style.ExcludeFromCapture
+                        ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0))
+                        : CreateFrostedBrush(),
                     IsHitTestVisible = false,
                 };
                 panel.Children.Insert(0, _injectedLayer);
@@ -108,23 +125,36 @@ namespace Pynelith.Glass.Effects
                 // 采样器默认先用元素自身内容；启用屏幕采样后替换为 ImageBrush。
                 Input = ShaderEffect.ImplicitInput,
                 CornerRadius = style.CornerRadius,
-                EdgeBand = style.EdgeBand,
-                Refraction = style.Refraction,
-                BlurRadius = style.BlurRadius,
-                Saturation = style.Saturation,
-                Brightness = style.Brightness,
+                BezelWidth = style.BezelWidth,
+                Thickness = style.Thickness,
+                GlassIor = style.GlassIor,
+                DisplacementFactor = style.DisplacementFactor,
+                Dispersion = style.Dispersion,
                 Tint = style.Tint,
                 TintOpacity = style.TintOpacity,
-                Highlight = style.Highlight,
-                Resolution = new Point(Math.Max(1, _surface.ActualWidth), Math.Max(1, _surface.ActualHeight)),
+                Legibility = style.Legibility,
+                SpecularStrength = style.Highlight,
+                BackgroundBlur = style.BackgroundBlur,
             };
 
             _surface.Effect = _effect;
             _surface.SizeChanged += OnTargetSizeChanged;
+            _effect.UpdateLayout(_surface.ActualWidth, _surface.ActualHeight, GetDpiScale());
 
-            if (style.UseScreenBackdrop)
+            // 关闭截屏排除时不能做屏幕采样（会抓到自身形成反馈），走乳白玻璃外观。
+            if (style.UseScreenBackdrop && style.ExcludeFromCapture)
             {
                 AttachScreenBackdrop();
+            }
+            else
+            {
+                // 无背景采样时，底色已是乳白渐变，改用淡白着色保持通透。
+                _effect.Tint = Colors.White;
+                _effect.TintOpacity = 0.05;
+                _effect.Legibility = 0.08;
+                _effect.StrokeOpacity = 0.55;
+                _effect.ShadowAlpha = 0.18;
+                SyncGeometry();
             }
         }
 
@@ -138,10 +168,21 @@ namespace Pynelith.Glass.Effects
             return new LiquidGlassSurface(target, style ?? new LiquidGlassStyle());
         }
 
+        /// <summary>非采样模式下的乳白玻璃底：左上偏亮、右下偏冷，避免变成死白。</summary>
+        private static Brush CreateFrostedBrush()
+        {
+            return new LinearGradientBrush(
+                Color.FromArgb(0xF0, 0xFC, 0xFD, 0xFF),
+                Color.FromArgb(0xC0, 0xE2, 0xE9, 0xF6),
+                new Point(0.15, 0),
+                new Point(0.85, 1));
+        }
+
         /// <summary>动态调整效果参数（须在 UI 线程调用）。</summary>
         public void Update(Action<LiquidGlassEffect> configure)
         {
             configure?.Invoke(_effect);
+            SyncGeometry();
         }
 
         /// <summary>当前是否真正在做屏幕背景采样（其余情况为降级模式）。</summary>
@@ -288,13 +329,23 @@ namespace Pynelith.Glass.Effects
 
         #endregion
 
-        private void OnTargetSizeChanged(object sender, SizeChangedEventArgs e) => SyncResolution();
+        private void OnTargetSizeChanged(object sender, SizeChangedEventArgs e) => SyncGeometry();
 
-        private void SyncResolution()
+        private void SyncGeometry()
         {
-            _effect.Resolution = new Point(
-                Math.Max(1, _surface.ActualWidth),
-                Math.Max(1, _surface.ActualHeight));
+            _effect.UpdateLayout(_surface.ActualWidth, _surface.ActualHeight, GetDpiScale());
+        }
+
+        private double GetDpiScale()
+        {
+            try
+            {
+                return VisualTreeHelper.GetDpi(_surface).DpiScaleX;
+            }
+            catch (InvalidOperationException)
+            {
+                return 1.0;
+            }
         }
 
         public void Dispose()

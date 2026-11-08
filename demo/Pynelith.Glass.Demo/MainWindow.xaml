@@ -17,7 +17,7 @@
             <Setter Property="Margin" Value="6,0,0,0"/>
             <Setter Property="Padding" Value="13,5"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="#D91D1D1F"/>
+            <Setter Property="Foreground" Value="#F0FFFFFF"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -56,10 +56,10 @@
             <StackPanel Grid.Row="0">
                 <TextBlock Text="Pynelith · Liquid Glass"
                            FontSize="16" FontWeight="SemiBold"
-                           Foreground="#E6000000"/>
+                           Foreground="#F5FFFFFF"/>
                 <TextBlock x:Name="StatusText"
                            FontSize="11" Margin="0,3,0,0"
-                           Foreground="#99000000"/>
+                           Foreground="#B3FFFFFF"/>
             </StackPanel>
 
             <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">

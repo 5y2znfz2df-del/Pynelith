@@ -1,35 +1,49 @@
-// LiquidGlass.fx — WPF 像素着色器 (ps_3_0)，硬件加速。
-// 苹果风「液态玻璃」(Liquid Glass)：
-//   1. 背景来自屏幕实时采样（ImageBrush），做轻模糊 + 高饱和 + 提亮，保持背景可辨认；
-//   2. 圆角 SDF 边缘做透镜折射，模拟玻璃厚度对背景的放大/弯折；
-//   3. 镜面亮边 + 内侧厚度阴影 + 顶部柔光，塑造玻璃的实体感与高光；
-//   4. 圆角外 alpha=0，让分层窗口真正透出桌面。
+// LiquidGlass.fx — 忠实移植 WinIsland 的液态玻璃着色器
+// (crates/winisland-render/src/shaders/liquid.sksl，去掉 LingoSoul/Siri 波段与多形状 union)
+// 原理：预模糊背景贴图 + 超椭圆圆角 SDF + 边缘斜率法线 + 真实折射(斯涅尔) + 色散 + 镜面光。
 // 编译: fxc /T ps_3_0 /E main /Fo LiquidGlass.gshader LiquidGlass.fx
 
-float2 Resolution   : register(c0);  // 元素尺寸（DIP/像素）
-float  CornerRadius : register(c1);  // 圆角半径（像素）
-float  EdgeBand     : register(c2);  // 边缘折射带宽度（像素）
-float  Refraction   : register(c3);  // 折射强度 0..1
-float  BlurRadius   : register(c4);  // 背景模糊半径（像素）
-float  Saturation   : register(c5);  // 背景饱和度倍数（>1 提升）
-float  Brightness   : register(c6);  // 背景亮度倍数
-float4 Tint         : register(c7);  // 玻璃着色
-float  TintOpacity  : register(c8);  // 着色不透明度 0..1
-float  Highlight    : register(c9);  // 高光强度 0..1
+float2 Resolution   : register(c0);  // 物理像素尺寸
+float4 Corner       : register(c1);  // x=extent(超椭圆半径) y=exponent
+float4 Bezel        : register(c2);  // x=bezelWidth y=thickness z=glassIor w=displacementFactor
+float4 Optics       : register(c3);  // x=dispersion y=progress z=opacity w=legibility
+float4 Tint         : register(c4);  // rgba
+float2 LightDir     : register(c5);  // 归一化光照方向
+float4 Specular     : register(c6);  // x=strength y=opposite z=opacity w=falloff
+float2 SpecShape    : register(c7);  // x=width y=sharpness
+float4 Stroke       : register(c8);  // x=width y=opacity z=offsetY
+float4 ShadowCfg    : register(c9);  // xy=offset z=radius
+float4 Extra        : register(c10); // x=shadowSpread y=shadowAlpha z=edgeSoftness w=edgeOffset
+float2 Extra2       : register(c11); // x=backgroundBlur y=blackFade
 
-sampler InputSampler : register(s0); // 背景采样（屏幕截图）
+sampler InputSampler : register(s0);
 
-// 圆角矩形带符号距离场：p 为中心坐标系，b 为半尺寸，r 为圆角半径。
-float sdRoundRect(float2 p, float2 b, float r)
+static const float kMaxSlope = 11.430052;
+static const float kEpsilon = 0.0001;
+
+// 超椭圆（continuous corner）有符号距离场；g 返回外法线。
+float sdRoundRect(float2 p, float4 s, float2 c, out float2 g)
 {
-    float2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+    float2 sgn = float2(p.x < s.x ? -1.0 : 1.0, p.y < s.y ? -1.0 : 1.0);
+    float2 q = abs(p - s.xy) - s.zw + c.x;
+
+    if (q.x > 0.0 && q.y > 0.0)
+    {
+        float2 m = q / c.x;
+        float2 mp = pow(m, float2(c.y - 1.0, c.y - 1.0));
+        g = normalize(mp) * sgn;
+        return (pow(mp.x * m.x + mp.y * m.y, 1.0 / c.y) - 1.0) * c.x;
+    }
+
+    g = q.x > q.y ? float2(sgn.x, 0.0) : float2(0.0, sgn.y);
+    return max(q.x, q.y) - c.x;
 }
 
-// 9-tap 高斯模糊（权重和 = 1），半径由 BlurRadius 控制。
-float3 BlurredBackground(float2 uv, float2 texel)
+// 预模糊背景采样（对应 WinIsland 的 backdrop.blurred）
+float3 Backdrop(float2 p)
 {
-    float2 o = texel * max(BlurRadius, 0.0);
+    float2 uv = p / Resolution + 0.5;
+    float2 o = Extra2.x / Resolution;
 
     float3 c = tex2D(InputSampler, uv).rgb * 0.25;
     c += (tex2D(InputSampler, uv + float2( o.x, 0.0)).rgb
@@ -40,61 +54,124 @@ float3 BlurredBackground(float2 uv, float2 texel)
         + tex2D(InputSampler, uv + float2( o.x, -o.y)).rgb
         + tex2D(InputSampler, uv + float2(-o.x,  o.y)).rgb
         + tex2D(InputSampler, uv + float2(-o.x, -o.y)).rgb) * 0.0625;
-
     return c;
+}
+
+// 外描边 + 投影（在填充区域之外合成）
+float Underlay(float2 p, float d, float2 g, float coverage)
+{
+    float4 s = float4(0.0, 0.0, Resolution * 0.5);
+    float2 corner = Corner.xy;
+
+    float strokeA = 0.0;
+    if (Stroke.y > 0.0)
+    {
+        float outset = max(Stroke.x * g.x * g.x + Stroke.z * max(g.y, 0.0), 0.0);
+        strokeA = clamp((1.0 - smoothstep(outset - 0.5, outset + 0.5, d)) * smoothstep(-0.5, 0.5, d), 0.0, 1.0)
+                * Stroke.y * coverage;
+    }
+
+    float shadowA = 0.0;
+    if (Extra.y > 0.0)
+    {
+        float2 unused;
+        float ds = sdRoundRect(p - ShadowCfg.xy, s, corner, unused) - Extra.x;
+        float r = max(ShadowCfg.z, 0.5);
+        shadowA = (1.0 - smoothstep(-r, r, ds)) * Extra.y * coverage;
+    }
+
+    return strokeA + shadowA * (1.0 - strokeA);
 }
 
 float4 main(float2 uv : TEXCOORD) : COLOR
 {
-    float2 halfSize = Resolution * 0.5;
-    float2 texel = 1.0 / max(Resolution, float2(1.0, 1.0));
-    float r = min(CornerRadius, min(halfSize.x, halfSize.y));
-
     float2 p = (uv - 0.5) * Resolution;
-    float d = sdRoundRect(p, halfSize, r);   // 负值在内部
 
-    // 圆角抗锯齿：轮廓外 alpha 归 0，让分层窗口透出桌面。
-    float alpha = saturate(-d + 0.5);
+    float t = saturate(Optics.y);
+    if (t <= 0.0)
+    {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
 
-    // 外法线（SDF 数值梯度）
-    float2 grad = float2(
-        sdRoundRect(p + float2(1.0, 0.0), halfSize, r) - sdRoundRect(p - float2(1.0, 0.0), halfSize, r),
-        sdRoundRect(p + float2(0.0, 1.0), halfSize, r) - sdRoundRect(p - float2(0.0, 1.0), halfSize, r));
-    grad = normalize(grad + float2(1e-5, 1e-5));
+    float pulse = 4.0 * t * (1.0 - t);
+    float coverage = smoothstep(0.0, 0.55, t);
+    float opacity = saturate(Optics.z);
 
-    // 边缘带权重：靠近轮廓 → 1，向内衰减到 0
-    float edgeBand = max(EdgeBand, 1.0);
-    float edge = saturate(1.0 + d / edgeBand);
-    edge = edge * edge;   // 越靠外越陡，折射集中在边缘
+    float4 s = float4(0.0, 0.0, Resolution * 0.5);
+    float2 corner = Corner.xy;
 
-    // 透镜折射：沿内法线偏移采样，把外部背景"吸入"边缘，形成液体透镜。
-    float2 offset = -grad * edge * Refraction * edgeBand * texel;
-    float3 col = BlurredBackground(uv + offset, texel);
+    float2 g;
+    float d = sdRoundRect(p, s, corner, g);
 
-    // 背景增强：高饱和 + 轻微提亮（苹果玻璃保留背景色彩，而不是像 Acrylic 那样去饱和发灰）
-    float lum = dot(col, float3(0.299, 0.587, 0.114));
-    col = lerp(float3(lum, lum, lum), col, Saturation) * Brightness;
+    float softness = max(Extra.z, 0.35);
+    float edgeOffset = Extra.w;
+    float fill = 1.0 - smoothstep(edgeOffset - softness, edgeOffset + softness, d);
 
-    // 玻璃着色：整体极淡，边缘略浓
-    col = lerp(col, Tint.rgb, TintOpacity * (0.25 + 0.75 * edge));
+    float under = fill < 1.0 ? Underlay(p, d, g, coverage) : 0.0;
+    if (fill <= 0.0)
+    {
+        return float4(0.0, 0.0, 0.0, under * opacity);
+    }
 
-    // 内侧厚度阴影：紧贴边缘的一圈柔暗，表现玻璃体的体量
-    float innerShadow = saturate(1.0 - (-d) / (edgeBand * 0.55));
-    col *= 1.0 - innerShadow * 0.10;
+    // ---- 边缘透镜：按 bezel 曲率求法线，再走真实折射 ----
+    float inward = max(-d, 0.0);
+    float band = saturate(inward / max(Bezel.x, 1.0));
+    float u = 1.0 - band;
+    float u2 = u * u;
+    float slope = inward <= Bezel.x
+        ? min(2.0 * u2 * u / sqrt(max(1.0 - u2 * u2, kEpsilon)), kMaxSlope)
+        : 0.0;
 
-    // 环境反射：左上方大面积柔光（苹果玻璃上表面掠射高光）
-    float2 lightDir = normalize(float2(-0.65, -1.0));
-    float envGrad = saturate(dot(uv - 0.5, lightDir) + 0.55);
-    float envGlow = pow(envGrad, 2.4) * 0.20 * Highlight;
+    float3 normal = normalize(float3(g * slope, 1.0));
+    float3 ray = refract(float3(0.0, 0.0, -1.0), normal, 1.0 / max(Bezel.z, 1.0001));
+    float2 shift = ray.z < 0.0
+        ? ray.xy / -ray.z * (Bezel.y + inward * 0.5) * Bezel.w
+        : float2(0.0, 0.0);
+    shift *= t + 7.0 * t * (1.0 - t);
 
-    // 边缘内发光 + 顶部柔光
-    float edgeGlow = pow(edge, 2.0) * 0.30 * Highlight;
-    float topGlow = saturate(1.0 - uv.y / 0.62) * 0.14 * Highlight;
-    col += (envGlow + edgeGlow + topGlow) * float3(1.0, 1.0, 1.0);
+    // ---- 色散：RGB 三通道不同折射偏移 ----
+    float spread = Optics.x;
+    float3 glass;
+    if (dot(shift, shift) < 0.0025)
+    {
+        glass = Backdrop(p);
+    }
+    else if (spread < 0.001)
+    {
+        glass = Backdrop(p + shift);
+    }
+    else
+    {
+        glass = float3(
+            Backdrop(p + shift * (1.0 + spread)).r,
+            Backdrop(p + shift).g,
+            Backdrop(p + shift * (1.0 - spread)).b);
+    }
 
-    // 镜面亮边：轮廓内侧约 2.6px 的高亮细线（液态玻璃的标志性高光）
-    float rim = smoothstep(2.6, 0.0, -d) * Highlight;
-    col = lerp(col, float3(1.0, 1.0, 1.0), saturate(rim * 0.9));
+    // ---- 着色 + 可读性补偿 ----
+    float luma = dot(glass, float3(0.2126, 0.7152, 0.0722));
+    float tintAmount = min(Tint.a + Optics.w * smoothstep(0.35, 0.95, luma), 1.0);
+    glass = lerp(glass, Tint.rgb, tintAmount * coverage);
 
-    return float4(col * alpha, alpha);
+    // ---- 黑色渐隐（可选）----
+    if (Extra2.y > 0.0)
+    {
+        float top = -s.w;
+        float height = saturate((p.y - top) / max(s.w * 2.0, 1.0));
+        float black = 1.0 - smoothstep(0.15, 0.85, height);
+        glass = lerp(glass, float3(0.0, 0.0, 0.0), Extra2.y * black);
+    }
+
+    // ---- 镜面高光：沿边缘法线的方向光 + 反向补光 ----
+    float rim = 1.0 - smoothstep(0.0, max(SpecShape.x, 0.25), abs(d));
+    if (rim > 0.0)
+    {
+        float falloff = Specular.w * band * band;
+        float lit = pow(max(dot(g, LightDir), 0.0), SpecShape.y) * max(Specular.x - falloff, 0.0);
+        float opposite = pow(max(dot(g, -LightDir), 0.0), SpecShape.y) * max(Specular.y - falloff, 0.0);
+        glass += clamp((lit + opposite) * rim, 0.0, 1.0) * Specular.z * min(coverage + pulse * 0.85, 1.75);
+    }
+
+    float alpha = fill + under * (1.0 - fill);
+    return float4(glass * fill * opacity, alpha * opacity);
 }

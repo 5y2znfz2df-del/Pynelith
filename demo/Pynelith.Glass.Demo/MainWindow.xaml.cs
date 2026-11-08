@@ -33,22 +33,29 @@ namespace Pynelith.Glass.Demo
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            // 液态玻璃：屏幕背景实时采样 + 边缘折射 + 镜面亮边
+            // --remote：让窗口出现在远程桌面/串流/录屏画面里（不做截屏排除，停用屏幕采样）
+            bool remote = Array.IndexOf(Environment.GetCommandLineArgs(), "--remote") >= 0;
+
+            // 液态玻璃：屏幕背景实时采样 + 超椭圆圆角 + 真实折射 + 色散 + 镜面光
             _liquid = LiquidGlassSurface.Install(Island, new LiquidGlassSurface.LiquidGlassStyle
             {
                 CornerRadius = 22,
-                EdgeBand = 20,
-                Refraction = 0.95,
-                BlurRadius = 4.0,
-                Saturation = 1.7,
-                Brightness = 1.08,
-                Tint = System.Windows.Media.Color.FromRgb(0xF4, 0xF8, 0xFF),
-                TintOpacity = 0.05,
-                Highlight = 0.95,
+                BezelWidth = 18,
+                Thickness = 14,
+                GlassIor = 1.45,
+                DisplacementFactor = 1.1,
+                Dispersion = 0.08,
+                Tint = System.Windows.Media.Color.FromRgb(10, 11, 15),
+                TintOpacity = 0.373,
+                Legibility = 0.32,
+                Highlight = 0.75,
+                BackgroundBlur = 6,
+                ExcludeFromCapture = !remote,
             });
 
             // 默认不启用系统背景层：背景完全由玻璃着色器采样绘制
-            ApplyBackdrop(GlassBackdropKind.None, GlassSystemStyle.Acrylic, "Liquid Glass · 屏幕采样");
+            ApplyBackdrop(GlassBackdropKind.None, GlassSystemStyle.Acrylic,
+                remote ? "Liquid Glass · 远程兼容(无折射)" : "Liquid Glass · 屏幕采样");
 
             // 采样是异步启动的，稍后再回报实际状态
             var report = new System.Windows.Threading.DispatcherTimer
@@ -93,13 +100,13 @@ namespace Pynelith.Glass.Demo
             switch (tag)
             {
                 case "Clear":
-                    ApplyPreset(0.02, 1.50, 1.10, 3.0, "Liquid Glass · Clear");
+                    ApplyPreset(0.0, 0.0, 1.1, 0.08, "Liquid Glass · Clear");
                     break;
                 case "Frosted":
-                    ApplyPreset(0.16, 1.20, 1.18, 10.0, "Liquid Glass · Frosted");
+                    ApplyPreset(0.55, 0.45, 1.1, 0.02, "Liquid Glass · Frosted");
                     break;
                 case "Tinted":
-                    ApplyPreset(0.10, 1.65, 1.08, 5.0, "Liquid Glass · Tinted");
+                    ApplyPreset(0.30, 0.30, 1.3, 0.14, "Liquid Glass · Tinted");
                     break;
                 default:
                     ApplyBackdrop(GlassBackdropKind.SystemBackdrop, GlassSystemStyle.Acrylic, "对照: SystemBackdrop · Acrylic");
@@ -107,17 +114,17 @@ namespace Pynelith.Glass.Demo
             }
         }
 
-        /// <summary>切换液态玻璃浓度档位（苹果玻璃的三种常用通透度）。</summary>
-        private void ApplyPreset(double tintOpacity, double saturation, double brightness, double blur, string label)
+        /// <summary>切换玻璃浓度档位（着色强度 / 可读性补偿 / 折射位移 / 色散）。</summary>
+        private void ApplyPreset(double tintOpacity, double legibility, double displacement, double dispersion, string label)
         {
             ApplyBackdrop(GlassBackdropKind.None, GlassSystemStyle.Acrylic, label);
 
             _liquid?.Update(effect =>
             {
                 effect.TintOpacity = tintOpacity;
-                effect.Saturation = saturation;
-                effect.Brightness = brightness;
-                effect.BlurRadius = blur;
+                effect.Legibility = legibility;
+                effect.DisplacementFactor = displacement;
+                effect.Dispersion = dispersion;
             });
         }
 
