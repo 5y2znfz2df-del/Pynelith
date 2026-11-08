@@ -24,6 +24,7 @@ namespace Pynelith.Island.Configuration
         private int _notificationDurationMs = 4000;
         private List<string> _notificationBlacklist = new List<string> { "QQ", "企业微信" };
         private bool _lyricsEnabled = true;
+        private bool _takeoverNotifications = true;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -121,6 +122,13 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _lyricsEnabled, value);
         }
 
+        /// <summary>接管全部系统通知：岛内展示并撤下原生 Toast。</summary>
+        public bool TakeoverNotifications
+        {
+            get => _takeoverNotifications;
+            set => Set(ref _takeoverNotifications, value);
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -139,6 +147,7 @@ namespace Pynelith.Island.Configuration
             NotificationDurationMs = defaults.NotificationDurationMs;
             NotificationBlacklist = new List<string>(defaults.NotificationBlacklist);
             LyricsEnabled = defaults.LyricsEnabled;
+            TakeoverNotifications = defaults.TakeoverNotifications;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

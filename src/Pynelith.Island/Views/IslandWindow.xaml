@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Pynelith Island"
-        Width="240" Height="44"
+        Width="400" Height="236"
         WindowStyle="None"
         ResizeMode="NoResize"
         AllowsTransparency="True"
@@ -23,16 +23,16 @@
         <SolidColorBrush x:Key="AccentBrush" Color="#7BE0FF"/>
 
         <Style x:Key="IconButton" TargetType="Button">
-            <Setter Property="Width" Value="26"/>
-            <Setter Property="Height" Value="26"/>
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
             <Setter Property="Foreground" Value="#D9FFFFFF"/>
-            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" CornerRadius="13" Background="#1AFFFFFF">
+                        <Border x:Name="Bd" CornerRadius="12" Background="#1AFFFFFF">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -49,82 +49,155 @@
         </Style>
     </Window.Resources>
 
-    <!-- 玻璃效果由渲染模块安装在 IslandRoot 上（注入底层玻璃层 + ShaderEffect），
-         这里只需保证根容器透明、可命中测试；窗口本身是分层窗口，圆角外真正透出桌面。 -->
-    <Grid x:Name="IslandRoot"
-          ClipToBounds="True"
-          Background="Transparent"
-          MouseLeftButtonDown="OnIslandMouseLeftButtonDown"
-          MouseMove="OnIslandMouseMove"
-          MouseLeftButtonUp="OnIslandMouseLeftButtonUp">
+    <!-- 窗口尺寸固定为展开尺寸（分层窗口每帧改尺寸会导致 DWM 重组卡顿）；
+         真正的"岛"是 CapsuleHost，弹簧动画只改它的大小，玻璃效果装在它上面。 -->
+    <Grid x:Name="IslandRoot" Background="Transparent" ClipToBounds="False">
 
-        <!-- 内容整体按 GlobalScale 缩放，岛尺寸同步放大，排版比例保持一致 -->
-        <Grid x:Name="ContentHost">
-            <!-- 收起态：胶囊 -->
-            <Grid x:Name="CollapsedView">
-                <StackPanel Orientation="Horizontal"
-                            HorizontalAlignment="Center"
-                            VerticalAlignment="Center">
-                    <Ellipse Width="6" Height="6" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="CollapsedTime"
-                               Margin="9,0,0,0"
-                               FontSize="13" FontWeight="SemiBold"
-                               Foreground="{StaticResource TextPrimary}"
-                               VerticalAlignment="Center"/>
-                    <Border Width="1" Height="11" Margin="10,0"
-                            Background="{StaticResource DividerBrush}"
-                            VerticalAlignment="Center"/>
-                    <TextBlock x:Name="CollapsedHint"
-                               Text="待机"
-                               FontSize="11"
-                               Foreground="{StaticResource TextSecondary}"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
-            </Grid>
+        <Grid x:Name="CapsuleHost"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Width="240" Height="44"
+              MouseLeftButtonDown="OnIslandMouseLeftButtonDown"
+              MouseMove="OnIslandMouseMove"
+              MouseLeftButtonUp="OnIslandMouseLeftButtonUp">
 
-            <!-- 展开态：通知 + 正在播放 + 歌词 -->
-            <Grid x:Name="ExpandedView" Visibility="Collapsed">
-                <Grid Margin="18,14,18,14">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+            <!-- 设计尺寸 = 配置尺寸（缩放前），LayoutTransform 统一放大 -->
+            <Grid x:Name="ContentHost"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Top">
+                <Grid.RenderTransform>
+                    <ScaleTransform x:Name="ContentScale" ScaleX="1" ScaleY="1"/>
+                </Grid.RenderTransform>
 
-                    <DockPanel Grid.Row="0">
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button x:Name="SettingsButton"
-                                    Style="{StaticResource IconButton}"
-                                    Content="⚙"
-                                    ToolTip="设置"
-                                    Click="OnOpenSettings"/>
-                            <Button x:Name="CollapseButton"
-                                    Style="{StaticResource IconButton}"
-                                    Content="⌃"
-                                    ToolTip="收起"
-                                    Margin="6,0,0,0"
-                                    Click="OnCollapseClick"/>
-                        </StackPanel>
+                <!-- 收起态：胶囊 -->
+                <Grid x:Name="CollapsedView" RenderTransformOrigin="0.5,0.5">
+                    <Grid.RenderTransform>
+                        <ScaleTransform x:Name="CollapsedScale" ScaleX="1" ScaleY="1"/>
+                    </Grid.RenderTransform>
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Ellipse Width="6" Height="6" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="CollapsedTime"
+                                   Margin="9,0,0,0"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   VerticalAlignment="Center"/>
+                        <Border Width="1" Height="11" Margin="10,0"
+                                Background="{StaticResource DividerBrush}"
+                                VerticalAlignment="Center"/>
+                        <TextBlock x:Name="CollapsedHint"
+                                   Text="待机"
+                                   FontSize="11"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
 
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock Text="Pynelith"
-                                       FontSize="15" FontWeight="SemiBold"
-                                       Foreground="{StaticResource TextPrimary}"/>
-                            <TextBlock x:Name="ExpandedSubtitle"
-                                       FontSize="10.5"
-                                       Margin="0,2,0,0"
-                                       Foreground="{StaticResource TextSecondary}"/>
-                        </StackPanel>
-                    </DockPanel>
+                <!-- 展开态：左时钟 / 右播放卡，下方通知列表（参考灵动岛横排布局） -->
+                <Grid x:Name="ExpandedView" Opacity="0" RenderTransformOrigin="0.5,0">
+                    <Grid.RenderTransform>
+                        <ScaleTransform x:Name="ExpandedScale" ScaleX="0.92" ScaleY="0.92"/>
+                    </Grid.RenderTransform>
+                    <Grid Margin="16,12,16,12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="1" Margin="0,12,0,0">
-                        <ItemsControl x:Name="NotificationList">
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="ExpandedTime"
+                                           FontSize="26" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimary}"/>
+                                <TextBlock x:Name="ExpandedDate"
+                                           FontSize="10.5"
+                                           Margin="0,1,0,0"
+                                           Foreground="{StaticResource TextSecondary}"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                <Button x:Name="SettingsButton"
+                                        Style="{StaticResource IconButton}"
+                                        Content="⚙"
+                                        ToolTip="设置"
+                                        Click="OnOpenSettings"/>
+                                <Button x:Name="CollapseButton"
+                                        Style="{StaticResource IconButton}"
+                                        Content="⌃"
+                                        ToolTip="收起"
+                                        Margin="6,0,0,0"
+                                        Click="OnCollapseClick"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1"
+                                Background="{StaticResource CardBrush}"
+                                CornerRadius="12"
+                                Padding="10,8"
+                                Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Border Width="40" Height="40" CornerRadius="10">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="#4C7DFF" Offset="0"/>
+                                            <GradientStop Color="#B44CFF" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <TextBlock Text="♫"
+                                               FontSize="16"
+                                               Foreground="#E6FFFFFF"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                </Border>
+
+                                <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontSize="12.5" FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextPrimary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Artist}"
+                                               FontSize="10.5"
+                                               Margin="0,1,0,0"
+                                               Foreground="{StaticResource TextSecondary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="LyricsText"
+                                               FontSize="10.5"
+                                               Margin="0,3,0,0"
+                                               Foreground="{StaticResource TextTertiary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+
+                                <TextBlock Grid.Column="2"
+                                           x:Name="PlayState"
+                                           Text="❚"
+                                           FontSize="10"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <ItemsControl x:Name="NotificationList"
+                                      Grid.Row="2"
+                                      Margin="0,8,0,0">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{StaticResource CardBrush}"
                                             CornerRadius="11"
-                                            Padding="11,8"
-                                            Margin="0,0,0,6">
+                                            Padding="11,7"
+                                            Margin="0,0,0,5">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -138,18 +211,18 @@
 
                                             <StackPanel Grid.Column="1" Margin="9,0,8,0">
                                                 <TextBlock Text="{Binding Title}"
-                                                           FontSize="12"
+                                                           FontSize="11.5"
                                                            Foreground="{StaticResource TextPrimary}"
                                                            TextTrimming="CharacterEllipsis"/>
                                                 <TextBlock Text="{Binding AppName}"
-                                                           FontSize="10"
+                                                           FontSize="9.5"
                                                            Margin="0,1,0,0"
                                                            Foreground="{StaticResource TextTertiary}"/>
                                             </StackPanel>
 
                                             <TextBlock Grid.Column="2"
                                                        Text="{Binding TimeText}"
-                                                       FontSize="10"
+                                                       FontSize="9.5"
                                                        Foreground="{StaticResource TextTertiary}"
                                                        VerticalAlignment="Top"/>
                                         </Grid>
@@ -157,63 +230,7 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-
-                        <Border x:Name="NowPlaying"
-                                Background="{StaticResource CardBrush}"
-                                CornerRadius="11"
-                                Padding="11,9"
-                                Margin="0,2,0,0">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <Border Width="34" Height="34" CornerRadius="9">
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                            <GradientStop Color="#4C7DFF" Offset="0"/>
-                                            <GradientStop Color="#B44CFF" Offset="1"/>
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                </Border>
-
-                                <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Title}"
-                                               FontSize="12.5" FontWeight="SemiBold"
-                                               Foreground="{StaticResource TextPrimary}"
-                                               TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding Artist}"
-                                               FontSize="10.5"
-                                               Margin="0,1,0,0"
-                                               Foreground="{StaticResource TextSecondary}"
-                                               TextTrimming="CharacterEllipsis"/>
-                                </StackPanel>
-
-                                <TextBlock Grid.Column="2"
-                                           Text="♫"
-                                           FontSize="15"
-                                           Foreground="{StaticResource TextSecondary}"
-                                           VerticalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-
-                        <TextBlock x:Name="LyricsText"
-                                   FontSize="11"
-                                   Foreground="{StaticResource TextSecondary}"
-                                   TextAlignment="Center"
-                                   TextTrimming="CharacterEllipsis"
-                                   Margin="0,10,0,0"/>
-                    </StackPanel>
-
-                    <TextBlock x:Name="FooterText"
-                               Grid.Row="2"
-                               Text="拖动移动 · 点击切换 · ⌃ 收起"
-                               FontSize="10"
-                               Foreground="{StaticResource TextTertiary}"
-                               HorizontalAlignment="Center"
-                               Margin="0,10,0,0"/>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
