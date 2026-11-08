@@ -23,7 +23,7 @@ namespace Pynelith.Glass.Demo
             // SizeToContent 在首次布局后才有实际宽度，定位放到 ContentRendered
             ContentRendered += OnContentRendered;
             // 内容尺寸变化时保持顶部居中
-            SizeChanged += (_, _) => CenterTop();
+            SizeChanged += (_, e) => CenterTop(e.NewSize.Width);
             Closed += (_, _) =>
             {
                 _surface?.Dispose();
@@ -76,13 +76,13 @@ namespace Pynelith.Glass.Demo
         private void OnContentRendered(object? sender, EventArgs e)
         {
             ContentRendered -= OnContentRendered;
-            CenterTop();
+            CenterTop(ActualWidth);
         }
 
-        private void CenterTop()
+        private void CenterTop(double width)
         {
             var work = SystemParameters.WorkArea;
-            Left = work.Left + (work.Width - ActualWidth) / 2;
+            Left = work.Left + (work.Width - width) / 2;
             Top = work.Top + 16;
         }
 
