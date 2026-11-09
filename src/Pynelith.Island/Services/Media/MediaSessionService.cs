@@ -119,13 +119,42 @@ namespace Pynelith.Island.Services.Media
                 best = null;
             }
 
-            if (best == _session)
+            // 同一会话不切换：WinRT 每次返回的包装对象可能不同实例，
+            // 必须按 AppId 判等，否则暂停时会误走 SwitchTo 把播放位置重置为 0。
+            if (best == null || IsSameSession(best, _session))
             {
                 UpdatePlaybackInfo();
                 return;
             }
 
             SwitchTo(best);
+        }
+
+        /// <summary>两个会话是否指向同一个播放器/同一路媒体。</summary>
+        private static bool IsSameSession(
+            GlobalSystemMediaTransportControlsSession a,
+            GlobalSystemMediaTransportControlsSession? b)
+        {
+            if (b == null)
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(a, b))
+            {
+                return true;
+            }
+
+            try
+            {
+                string idA = a.SourceAppUserModelId ?? string.Empty;
+                string idB = b.SourceAppUserModelId ?? string.Empty;
+                return idA.Length > 0 && string.Equals(idA, idB, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static bool IsActivelyPlaying(GlobalSystemMediaTransportControlsSession session)
@@ -221,12 +250,27 @@ namespace Pynelith.Island.Services.Media
             => OnUi(() =>
             {
                 UpdatePlaybackInfo();
-                // 当前会话停住而别的会话开播：自动跟随过去。
-                if (!IsPlaying)
+
+                // 当前会话暂停/停止时不要盲目重新扫描：只有确实存在"另一个正在播放"
+                // 的会话才跟随过去，否则会重置位置基准，表现为歌词暂停后恢复时重头滚。
+                if (!IsPlaying && HasOtherPlayingSession())
                 {
                     Rescan();
                 }
             });
+
+        private bool HasOtherPlayingSession()
+        {
+            try
+            {
+                return _manager != null
+                    && _manager.GetSessions().Any(s => !IsSameSession(s, _session) && IsActivelyPlaying(s));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         private void OnSessionTimelineChanged(GlobalSystemMediaTransportControlsSession sender, object args)
             => OnUi(UpdateTimeline);
@@ -394,6 +438,13 @@ namespace Pynelith.Island.Services.Media
             if (!changed)
             {
                 // 时间轴停滞（部分播放器只给初始值）：继续用时间推算保证歌词推进
+                return;
+            }
+
+            if (!_isPlaying)
+            {
+                // 暂停期间不接受校正：有的播放器暂停时把时间轴清零，
+                // 若照单全收，恢复播放后歌词会从第一句重新滚。
                 return;
             }
 

@@ -12,9 +12,9 @@ namespace Pynelith.Island.Configuration
     public sealed class IslandConfig : INotifyPropertyChanged
     {
         private double _globalScale = 1.0;
-        private double _collapsedWidth = 128;
-        private double _collapsedHeight = 28;
-        private double _expandedWidth = 240;
+        private double _collapsedWidth = 124;
+        private double _collapsedHeight = 24;
+        private double _expandedWidth = 200;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
@@ -41,21 +41,21 @@ namespace Pynelith.Island.Configuration
         public double CollapsedWidth
         {
             get => _collapsedWidth;
-            set => Set(ref _collapsedWidth, Math.Clamp(value, 120, 480));
+            set => Set(ref _collapsedWidth, Math.Clamp(value, 100, 480));
         }
 
-        /// <summary>收起高度（DIP，缩放前）。</summary>
+        /// <summary>收起高度（DIP，缩放前）。媒体态高度与它保持一致。</summary>
         public double CollapsedHeight
         {
             get => _collapsedHeight;
-            set => Set(ref _collapsedHeight, Math.Clamp(value, 24, 96));
+            set => Set(ref _collapsedHeight, Math.Clamp(value, 20, 96));
         }
 
         /// <summary>媒体态宽度（DIP，缩放前）。高度始终与空闲态一致，避免遮挡视野。</summary>
         public double ExpandedWidth
         {
             get => _expandedWidth;
-            set => Set(ref _expandedWidth, Math.Clamp(value, 200, 900));
+            set => Set(ref _expandedWidth, Math.Clamp(value, 160, 900));
         }
 
         /// <summary>相对「顶部居中」停靠点的 X 偏移（DIP，正值向右）。</summary>

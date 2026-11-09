@@ -30,7 +30,7 @@ namespace Pynelith.Island.Views
     /// </summary>
     public partial class IslandWindow : Window
     {
-        private const double SpringZeta = 0.82;    // 阻尼比：<1 带一点回弹，接近系统动效
+        private const double SpringZeta = 0.92;    // 阻尼比：接近临界阻尼，收尾干脆不过冲
         private const double MinResponse = 0.12;   // 弹簧响应下限（秒）
         private const double MaxFrameDelta = 0.05; // 单帧最大步长（秒），防止时间跳变导致的位置突跳
 
@@ -369,7 +369,9 @@ namespace Pynelith.Island.Views
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
 
-            LyricHost.Visibility = Config.LyricsEnabled ? Visibility.Visible : Visibility.Collapsed;
+            Visibility lyricVisibility = Config.LyricsEnabled ? Visibility.Visible : Visibility.Collapsed;
+            CompactLyricHost.Visibility = lyricVisibility;
+            DetailLyricHost.Visibility = lyricVisibility;
         }
 
         #endregion
@@ -377,8 +379,8 @@ namespace Pynelith.Island.Views
         #region 弹簧形变（加固版）
 
         /// <summary>
-        /// 三种形态：空闲（时间胶囊）→ 媒体紧凑（封面+歌词）→ 详情展开（点击胶囊后显示曲目信息）。
-        /// 紧凑态高度保持与空闲态一致；只有详情态更高。
+        /// 三种形态：空闲（时间胶囊）→ 媒体紧凑（封面+歌词）→ 展开（大封面+曲目信息+歌词）。
+        /// 紧凑态高度与空闲态一致；只有展开态更高。
         /// </summary>
         private (double IdleW, double IdleH, double MediaW, double MediaH, double DetailW, double DetailH) Metrics()
         {
@@ -392,10 +394,14 @@ namespace Pynelith.Island.Views
                 mediaWidth,
                 idleHeight,
                 mediaWidth + 60 * scale,
-                Math.Max(72 * scale, idleHeight));
+                Math.Max(60 * scale, idleHeight));
         }
 
-        /// <summary>把媒体态进度 p 与详情展开度 d 应用到胶囊尺寸、圆角裁剪、内容与玻璃参数。</summary>
+        /// <summary>
+        /// 把形态进度应用到胶囊尺寸与内容交叉淡入。
+        /// 关键：内容层是固定尺寸的，动画帧内只改容器尺寸与 Opacity，
+        /// 不做任何布局重算/字号变更，因此展开过程不会卡顿或抖动。
+        /// </summary>
         private void ApplyMorph(double p)
         {
             if (double.IsNaN(p) || double.IsInfinity(p))
@@ -411,8 +417,7 @@ namespace Pynelith.Island.Views
             }
 
             double pc = Math.Clamp(p, 0, 1);
-            // 详情展开只在媒体态生效
-            double pd = Math.Clamp(_d, 0, 1) * pc;
+            double pd = Math.Clamp(_d, 0, 1) * pc; // 展开只在媒体态生效
             var m = Metrics();
 
             double width = m.IdleW + (m.MediaW - m.IdleW) * pc + (m.DetailW - m.MediaW) * pd;
@@ -421,7 +426,6 @@ namespace Pynelith.Island.Views
             CapsuleHost.Width = width;
             CapsuleHost.Height = height;
 
-            // 设计尺寸（缩放前）= 实际尺寸 / 缩放
             double scale = Math.Max(0.01, Config.GlobalScale);
             ContentHost.Width = width / scale;
             ContentHost.Height = height / scale;
@@ -431,51 +435,34 @@ namespace Pynelith.Island.Views
             _capsuleClip.RadiusX = radius;
             _capsuleClip.RadiusY = radius;
 
-            // 内容交叉淡入 + 轻微缩放，避免硬切
-            double idleAlpha = Math.Clamp(1 - p * 1.9, 0, 1);
-            double mediaAlpha = Math.Clamp((p - 0.30) * 1.9, 0, 1);
+            // 三层交叉淡入：空闲 ⇄ 紧凑 ⇄ 展开
+            double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1);
+            double compactAlpha = Math.Clamp(pc * 2.2, 0, 1) * Math.Clamp(1 - pd * 1.8, 0, 1);
+            double detailAlpha = Math.Clamp((pd - 0.18) / 0.82, 0, 1);
 
             IdleView.Opacity = idleAlpha;
             IdleView.IsHitTestVisible = idleAlpha > 0.5;
-            IdleScale.ScaleX = 1 + 0.10 * pc;
-            IdleScale.ScaleY = 1 + 0.10 * pc;
+            IdleScale.ScaleX = 1 + 0.08 * pc;
+            IdleScale.ScaleY = 1 + 0.08 * pc;
 
-            MediaView.Opacity = mediaAlpha;
-            MediaView.IsHitTestVisible = mediaAlpha > 0.5;
-            double es = 0.94 + 0.06 * Math.Clamp(p, 0, 1.08);
-            MediaScale.ScaleX = es;
-            MediaScale.ScaleY = es;
+            CompactLayer.Opacity = compactAlpha;
+            CompactLayer.IsHitTestVisible = compactAlpha > 0.5;
 
-            ApplyDetailContent(pd);
+            DetailLayer.Opacity = detailAlpha;
+            DetailLayer.IsHitTestVisible = detailAlpha > 0.5;
+
             ApplyGlassShape(width, height);
         }
 
-        /// <summary>详情展开度驱动的排版：封面放大、圆角加大、曲目行出现、歌词放大。</summary>
-        private void ApplyDetailContent(double pd)
-        {
-            double coverSize = 20 + 24 * pd;
-            double coverRadius = 7 + 7 * pd;
-
-            CoverFrame.Width = coverSize;
-            CoverFrame.Height = coverSize;
-            CoverClip.Rect = new Rect(0, 0, coverSize, coverSize);
-            CoverClip.RadiusX = coverRadius;
-            CoverClip.RadiusY = coverRadius;
-
-            TrackLabel.Visibility = pd > 0.05 ? Visibility.Visible : Visibility.Collapsed;
-            TrackLabel.Opacity = pd;
-
-            double lyricFont = 11 + 2 * pd;
-            LyricA.FontSize = lyricFont;
-            LyricB.FontSize = lyricFont;
-            LyricHost.Height = 16 + 8 * pd;
-        }
-
-        /// <summary>把圆角、折射带、染色推给渲染模块（尺寸变化超过阈值才写，避免每帧无谓更新）。</summary>
+        /// <summary>
+        /// 把圆角、折射带、染色推给渲染模块。
+        /// 阈值 2.5 DIP：动画期间把玻璃重绘次数从「每帧」降到约 1/4，
+        /// 玻璃是背景模糊，2.5 DIP 内的形状差异肉眼不可见，但省下大量抓屏开销。
+        /// </summary>
         private void ApplyGlassShape(double width, double height)
         {
-            if (Math.Abs(width - _lastGlassWidth) < 0.4
-                && Math.Abs(height - _lastGlassHeight) < 0.4
+            if (Math.Abs(width - _lastGlassWidth) < 2.5
+                && Math.Abs(height - _lastGlassHeight) < 2.5
                 && _lastGlassWidth > 0)
             {
                 return;
@@ -576,7 +563,7 @@ namespace Pynelith.Island.Views
             }
 
             // 响应时长由配置动画时长决定；阻尼比固定，保证手感一致
-            double response = Math.Max(MinResponse, Config.AnimationDurationMs / 1000.0 * 0.55);
+            double response = Math.Max(MinResponse, Config.AnimationDurationMs / 1000.0 * 0.5);
             double omega = 2 * Math.PI / response;
             double k = omega * omega;
             double c = 2 * SpringZeta * omega;
@@ -660,8 +647,11 @@ namespace Pynelith.Island.Views
             }
 
             SyncPlaybackGlyph();
-            CoverImage.Source = _media.Artwork;
-            CoverFallback.Visibility = _media.Artwork == null ? Visibility.Visible : Visibility.Collapsed;
+            CompactCoverImage.Source = _media.Artwork;
+            DetailCoverImage.Source = _media.Artwork;
+            Visibility fallbackVisibility = _media.Artwork == null ? Visibility.Visible : Visibility.Collapsed;
+            CompactCoverFallback.Visibility = fallbackVisibility;
+            DetailCoverFallback.Visibility = fallbackVisibility;
 
             TrackLabel.Text = string.IsNullOrWhiteSpace(_media.Artist)
                 ? _media.Title
@@ -787,22 +777,39 @@ namespace Pynelith.Island.Views
             SwapLyric(text);
         }
 
-        /// <summary>歌词行交叉淡入切换：新行自下方滑入，旧行向上淡出（纯合成层动画，稳定 60fps）。</summary>
+        /// <summary>歌词行交叉淡入切换：紧凑层与展开层同步切换（纯合成层动画，稳定 60fps）。</summary>
         private void SwapLyric(string text)
         {
-            TextBlock incoming = _lyricShowingA ? LyricB : LyricA;
-            TextBlock outgoing = _lyricShowingA ? LyricA : LyricB;
-            var inTrans = (TranslateTransform)incoming.RenderTransform;
-            var outTrans = (TranslateTransform)outgoing.RenderTransform;
-            _lyricShowingA = !_lyricShowingA;
+            // _lyricShowingA 表示"当前可见的是 A"：A 可见时把新行写进 B
+            bool toB = _lyricShowingA;
+            _lyricShowingA = !toB;
 
+            AnimateLyricRow(
+                toB ? CompactLyricB : CompactLyricA,
+                toB ? CompactLyricA : CompactLyricB,
+                toB ? CompactLyricBTrans : CompactLyricATrans,
+                toB ? CompactLyricATrans : CompactLyricBTrans,
+                text);
+
+            AnimateLyricRow(
+                toB ? DetailLyricB : DetailLyricA,
+                toB ? DetailLyricA : DetailLyricB,
+                toB ? DetailLyricBTrans : DetailLyricATrans,
+                toB ? DetailLyricATrans : DetailLyricBTrans,
+                text);
+        }
+
+        private static void AnimateLyricRow(
+            TextBlock incoming, TextBlock outgoing,
+            TranslateTransform inTrans, TranslateTransform outTrans, string text)
+        {
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            const double durationMs = 260;
+            const double durationMs = 220;
 
             if (string.IsNullOrWhiteSpace(text))
             {
                 outgoing.BeginAnimation(OpacityProperty, Fade(outgoing.Opacity, 0, durationMs, ease));
-                outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -12, durationMs, ease));
+                outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -10, durationMs, ease));
                 incoming.BeginAnimation(OpacityProperty, null);
                 incoming.Text = string.Empty;
                 incoming.Opacity = 0;
@@ -810,19 +817,28 @@ namespace Pynelith.Island.Views
             }
 
             incoming.Text = text;
-            inTrans.Y = 12;
+            inTrans.Y = 10;
             incoming.BeginAnimation(OpacityProperty, Fade(0, 1, durationMs, ease));
-            inTrans.BeginAnimation(TranslateTransform.YProperty, Fade(12, 0, durationMs, ease));
+            inTrans.BeginAnimation(TranslateTransform.YProperty, Fade(10, 0, durationMs, ease));
 
             outgoing.BeginAnimation(OpacityProperty, Fade(outgoing.Opacity, 0, durationMs, ease));
-            outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -12, durationMs, ease));
+            outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -10, durationMs, ease));
         }
 
         /// <summary>无动画直接设置当前可见歌词文本（清空/占位文案用）。</summary>
         private void SetLyricImmediate(string text)
         {
-            TextBlock active = _lyricShowingA ? LyricA : LyricB;
-            TextBlock idle = _lyricShowingA ? LyricB : LyricA;
+            SetLyricRowImmediate(CompactLyricA, CompactLyricB,
+                CompactLyricATrans, CompactLyricBTrans, text);
+            SetLyricRowImmediate(DetailLyricA, DetailLyricB,
+                DetailLyricATrans, DetailLyricBTrans, text);
+        }
+
+        private void SetLyricRowImmediate(
+            TextBlock a, TextBlock b, TranslateTransform tA, TranslateTransform tB, string text)
+        {
+            TextBlock active = _lyricShowingA ? a : b;
+            TextBlock idle = _lyricShowingA ? b : a;
 
             active.BeginAnimation(OpacityProperty, null);
             idle.BeginAnimation(OpacityProperty, null);
@@ -831,8 +847,8 @@ namespace Pynelith.Island.Views
             active.Opacity = string.IsNullOrEmpty(text) ? 0 : 1;
             idle.Text = string.Empty;
             idle.Opacity = 0;
-            ((TranslateTransform)active.RenderTransform).Y = 0;
-            ((TranslateTransform)idle.RenderTransform).Y = 0;
+            (active == a ? tA : tB).Y = 0;
+            (idle == a ? tA : tB).Y = 0;
         }
 
         private static DoubleAnimation Fade(double from, double to, double durationMs, IEasingFunction ease)
