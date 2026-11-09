@@ -10,7 +10,7 @@
 点一下展开详情，全程 60fps。
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#系统要求)
+[![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta%200.1.0-orange)](#roadmap)
 
