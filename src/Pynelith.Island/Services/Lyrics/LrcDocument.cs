@@ -144,7 +144,7 @@ namespace Pynelith.Island.Services.Lyrics
 
         private static readonly string[] MetadataPrefixes =
         {
-            "作词", "作曲", "编曲", "制作人", "出品", "监制", "混音", "母带", "录音",
+            "作词", "作曲", "编曲", "制作", "出品", "监制", "混音", "母带", "录音",
             "和声", "吉他", "贝斯", "鼓", "词", "曲", "OP", "SP", "发行", "统筹", "策划",
         };
 
@@ -166,7 +166,7 @@ namespace Pynelith.Island.Services.Lyrics
                 }
 
                 char next = trimmed[prefix.Length];
-                if (next == ':' || next == '：' || char.IsWhiteSpace(next))
+                if (next == ':' || next == '：' || next == '/' || char.IsWhiteSpace(next))
                 {
                     return true;
                 }

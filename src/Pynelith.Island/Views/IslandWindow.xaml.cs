@@ -66,6 +66,8 @@ namespace Pynelith.Island.Views
         private Point _pressPoint;
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
+        private int _glassFrameSkip;
+        private long _springStartTicks;
 
         // 详情展开弹簧（与主弹簧共用参数）：_d 为展开度 0..1
         private bool _detail;
@@ -81,10 +83,25 @@ namespace Pynelith.Island.Views
         private string _trackFingerprint = string.Empty;
         private LrcDocument? _currentLrc;
         private int _lyricIndex = -2; // -2 表示尚未同步过
+        private TimeSpan _lastLyricPosition = TimeSpan.MinValue;
         private CancellationTokenSource? _lyricLookupCts;
         private bool _lyricShowingA;
+        private string _currentLyricText = string.Empty;
 
         private IslandConfig Config => _service.Config;
+
+        /// <summary>定时器回调保护：单次歌词/时钟异常不应直接崩溃整个宿主。</summary>
+        private static void Guarded(Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception)
+            {
+                // 忽略单次取样异常，下一拍继续。
+            }
+        }
 
         public IslandWindow(ConfigService service, MediaSessionService media, LyricsService lyrics)
         {
@@ -107,9 +124,11 @@ namespace Pynelith.Island.Views
                 TintAmount = Config.GlassBlurStrength,
                 TintTop = Color.FromRgb(6, 8, 11),
                 TintBottom = Color.FromRgb(20, 24, 32),
-                CaptureMargin = 90,
+                CaptureMargin = 50,
                 LightFollowsCursor = true,
-                FramesPerSecond = 60,
+                // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
+                // 24fps 采样肉眼无差别，抓屏面积也一并收窄，给形变动画腾出 CPU。
+                FramesPerSecond = 24,
             });
 
             // ---- 通知仅用于空闲态计数（接管系统通知时关闭模拟通知） ----
@@ -120,18 +139,25 @@ namespace Pynelith.Island.Views
             {
                 Interval = TimeSpan.FromSeconds(1),
             };
-            _clockTimer.Tick += (_, _) => UpdateTexts();
-
-            _lyricTimer = new DispatcherTimer(DispatcherPriority.Render)
+            _clockTimer.Tick += (_, _) => Guarded(() =>
             {
-                // 100ms 心跳：歌词切行误差控制在 ±100ms 内，肉眼与播放节奏一致
-                Interval = TimeSpan.FromMilliseconds(100),
+                UpdateTexts();
+                // 兜底：即使歌词定时器因极端负载被推迟，也保证每秒至少对齐一次
+                SyncLyricPosition();
+            });
+
+            _lyricTimer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                // 50ms 采样：配合 110ms 提前量（切行动画时长的一半），
+                // 歌词显示与真实播放点的误差稳定控制在 ±50ms 以内。
+                // 优先级用 Normal：Render 优先级会被逐帧动画长期抢占，导致歌词长时间不更新。
+                Interval = TimeSpan.FromMilliseconds(50),
             };
-            _lyricTimer.Tick += (_, _) =>
+            _lyricTimer.Tick += (_, _) => Guarded(() =>
             {
                 SyncLyricPosition();
                 SyncPlaybackGlyph();
-            };
+            });
 
             _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
@@ -461,6 +487,14 @@ namespace Pynelith.Island.Views
         /// </summary>
         private void ApplyGlassShape(double width, double height)
         {
+            // 动画期间每 5 帧才真正刷新玻璃：一次刷新包含抓屏 + 像素处理 + 位图上传，
+            // 是逐帧动画里最重的一步。降到约 12Hz 后，慢帧（>16.7ms）数量显著下降，
+            // 而玻璃是背景模糊、形状差异在 2.5 DIP 内不可见，观感无损失。
+            if (_springRunning && (++_glassFrameSkip % 5) != 0)
+            {
+                return;
+            }
+
             if (Math.Abs(width - _lastGlassWidth) < 2.5
                 && Math.Abs(height - _lastGlassHeight) < 2.5
                 && _lastGlassWidth > 0)
@@ -531,6 +565,7 @@ namespace Pynelith.Island.Views
         private void EnsureSpring()
         {
             _lastFrameTicks = Stopwatch.GetTimestamp();
+            _springStartTicks = _lastFrameTicks;
             if (!_springRunning)
             {
                 _springRunning = true;
@@ -547,6 +582,11 @@ namespace Pynelith.Island.Views
 
             _springRunning = false;
             CompositionTarget.Rendering -= OnSpringFrame;
+
+            // 让动画结束后的下一次 ApplyMorph 一定把最终形状推给玻璃层
+            _lastGlassWidth = -1;
+            _lastGlassHeight = -1;
+            _glassFrameSkip = 0;
         }
 
         private void OnSpringFrame(object? sender, EventArgs e)
@@ -568,30 +608,44 @@ namespace Pynelith.Island.Views
             double k = omega * omega;
             double c = 2 * SpringZeta * omega;
 
-            // 半隐式欧拉积分，帧率无关（主形变与详情展开共用同一组弹簧参数）
-            double accel = -k * (_p - _target) - c * _v;
-            _v += accel * dt;
-            _p += _v * dt;
+            // 固定子步长积分：帧长可能达到 50ms（玻璃抓屏较重），
+            // 单步欧拉在 ω·dt 接近 2 时会振荡甚至发散，表现为抖动且永不收敛。
+            // 拆成 ≤8ms 的子步后，任何帧率下轨迹一致且必然收敛。
+            const double maxSubStep = 0.008;
+            int steps = Math.Min(8, Math.Max(1, (int)Math.Ceiling(dt / maxSubStep)));
+            double h = dt / steps;
 
             double detailTarget = _detail ? 1 : 0;
-            double dAccel = -k * (_d - detailTarget) - c * _dv;
-            _dv += dAccel * dt;
-            _d += _dv * dt;
 
-            ApplyMorph(_p);
+            for (int i = 0; i < steps; i++)
+            {
+                double accel = -k * (_p - _target) - c * _v;
+                _v += accel * h;
+                _p += _v * h;
+
+                double dAccel = -k * (_d - detailTarget) - c * _dv;
+                _dv += dAccel * h;
+                _d += _dv * h;
+            }
 
             bool mainSettled = Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015;
             bool detailSettled = Math.Abs(_d - detailTarget) < 0.0015 && Math.Abs(_dv) < 0.0015;
 
-            if (mainSettled && detailSettled)
+            // 超时兜底：极端负载下也不允许动画无限挂起，否则 Rendering 会持续占满 UI 线程
+            bool timedOut = Stopwatch.GetElapsedTime(_springStartTicks) > TimeSpan.FromSeconds(2);
+
+            if (mainSettled && detailSettled || timedOut)
             {
                 _p = _target;
                 _v = 0;
                 _d = detailTarget;
                 _dv = 0;
-                ApplyMorph(_p);
                 StopSpring();
+                ApplyMorph(_p);
+                return;
             }
+
+            ApplyMorph(_p);
         }
 
         /// <summary>空闲/媒体形态切换（由媒体会话状态自动驱动）；离开媒体态时收起详情。</summary>
@@ -752,7 +806,10 @@ namespace Pynelith.Island.Views
             });
         }
 
-        /// <summary>按播放位置同步当前歌词行（100ms 心跳，120ms 提前量以抵消切行动画时长）。</summary>
+        /// <summary>
+        /// 按播放位置同步当前歌词行（50ms 采样 + 110ms 提前量，对应切行动画的一半时长）。
+        /// 位置发生跳变（切歌/拖动进度）时强制重算，避免沿用旧行号。
+        /// </summary>
         private void SyncLyricPosition()
         {
             if (!_mediaMode || !Config.LyricsEnabled)
@@ -766,7 +823,18 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            int index = doc.LineAt(_media.Position + TimeSpan.FromMilliseconds(120));
+            TimeSpan position = _media.Position;
+
+            // 注意：TimeSpan.MinValue 取 Duration 会溢出，必须先排除首次采样
+            if (_lastLyricPosition != TimeSpan.MinValue
+                && (position - _lastLyricPosition).Duration() > TimeSpan.FromSeconds(1.5))
+            {
+                _lyricIndex = -2; // 位置跳变：强制重新定位
+            }
+
+            _lastLyricPosition = position;
+
+            int index = doc.LineAt(position + TimeSpan.FromMilliseconds(110));
             if (index == _lyricIndex)
             {
                 return;
@@ -774,7 +842,13 @@ namespace Pynelith.Island.Views
 
             _lyricIndex = index;
             string text = index >= 0 ? doc.Lines[index].Text : string.Empty;
-            SwapLyric(text);
+
+            // 连续多行文本相同（副歌重复）时不重播滚动动画，否则会看起来像卡住/抽搐
+            if (!string.Equals(text, _currentLyricText, StringComparison.Ordinal))
+            {
+                _currentLyricText = text;
+                SwapLyric(text);
+            }
         }
 
         /// <summary>歌词行交叉淡入切换：紧凑层与展开层同步切换（纯合成层动画，稳定 60fps）。</summary>
@@ -828,6 +902,8 @@ namespace Pynelith.Island.Views
         /// <summary>无动画直接设置当前可见歌词文本（清空/占位文案用）。</summary>
         private void SetLyricImmediate(string text)
         {
+            _currentLyricText = text;
+
             SetLyricRowImmediate(CompactLyricA, CompactLyricB,
                 CompactLyricATrans, CompactLyricBTrans, text);
             SetLyricRowImmediate(DetailLyricA, DetailLyricB,
