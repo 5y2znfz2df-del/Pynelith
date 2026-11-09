@@ -14,7 +14,7 @@ namespace Pynelith.Island.Configuration
         private double _globalScale = 1.0;
         private double _collapsedWidth = 128;
         private double _collapsedHeight = 28;
-        private double _expandedWidth = 288;
+        private double _expandedWidth = 240;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;

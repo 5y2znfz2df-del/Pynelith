@@ -387,15 +387,18 @@ namespace Pynelith.Island.Services.Media
         /// </summary>
         private void ApplyTimeline(TimeSpan smtcPosition)
         {
-            if (smtcPosition == _lastSmtcPosition)
+            bool changed = smtcPosition != _lastSmtcPosition;
+            bool advanced = smtcPosition > _lastSmtcPosition;
+            _lastSmtcPosition = smtcPosition;
+
+            if (!changed)
             {
+                // 时间轴停滞（部分播放器只给初始值）：继续用时间推算保证歌词推进
                 return;
             }
 
-            _lastSmtcPosition = smtcPosition;
-
-            TimeSpan extrapolated = Position;
-            if ((smtcPosition - extrapolated).Duration() > TimelineTolerance)
+            // 播放器在推进时以它为准（比推算更准）；回退/拖动则要求偏差足够大才采用
+            if (advanced || (smtcPosition - Position).Duration() > TimelineTolerance)
             {
                 _positionBase = smtcPosition;
                 _positionStampUtc = DateTime.UtcNow;

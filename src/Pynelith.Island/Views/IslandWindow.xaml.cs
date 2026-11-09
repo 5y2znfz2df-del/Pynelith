@@ -67,6 +67,14 @@ namespace Pynelith.Island.Views
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
 
+        // 详情展开弹簧（与主弹簧共用参数）：_d 为展开度 0..1
+        private bool _detail;
+        private double _d;
+        private double _dv;
+
+        // 点击播放后短暂锁定图标，避免 SMTC 状态回报滞后把图标刷回旧值
+        private DateTime _playGlyphLockUntil = DateTime.MinValue;
+
         private IntPtr _hwnd;
         private bool _dockGuardActive;
 
@@ -116,9 +124,14 @@ namespace Pynelith.Island.Views
 
             _lyricTimer = new DispatcherTimer(DispatcherPriority.Render)
             {
-                Interval = TimeSpan.FromMilliseconds(300),
+                // 100ms 心跳：歌词切行误差控制在 ±100ms 内，肉眼与播放节奏一致
+                Interval = TimeSpan.FromMilliseconds(100),
             };
-            _lyricTimer.Tick += (_, _) => SyncLyricPosition();
+            _lyricTimer.Tick += (_, _) =>
+            {
+                SyncLyricPosition();
+                SyncPlaybackGlyph();
+            };
 
             _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
@@ -344,12 +357,14 @@ namespace Pynelith.Island.Views
 
         #endregion
 
-        /// <summary>窗口固定为媒体态宽度；高度始终等于空闲态高度，避免遮挡视野。</summary>
+        /// <summary>窗口固定为最大形态尺寸（详情展开态）；胶囊按当前形态在窗口内顶部居中。</summary>
         private void ApplyWindowSize()
         {
             double scale = Config.GlobalScale;
-            Width = Math.Max(160, Config.ExpandedWidth * scale);
-            Height = Math.Max(24, Config.CollapsedHeight * scale);
+            var m = Metrics();
+
+            Width = Math.Max(m.DetailW, m.MediaW);
+            Height = Math.Max(m.DetailH, m.IdleH);
 
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
@@ -361,20 +376,26 @@ namespace Pynelith.Island.Views
 
         #region 弹簧形变（加固版）
 
-        /// <summary>两种形态高度恒定（等于空闲高度），只有宽度随媒体态展开。</summary>
-        private (double IdleW, double IdleH, double MediaW, double MediaH) Metrics()
+        /// <summary>
+        /// 三种形态：空闲（时间胶囊）→ 媒体紧凑（封面+歌词）→ 详情展开（点击胶囊后显示曲目信息）。
+        /// 紧凑态高度保持与空闲态一致；只有详情态更高。
+        /// </summary>
+        private (double IdleW, double IdleH, double MediaW, double MediaH, double DetailW, double DetailH) Metrics()
         {
             double scale = Config.GlobalScale;
-            double height = Config.CollapsedHeight * scale;
+            double idleHeight = Config.CollapsedHeight * scale;
+            double mediaWidth = Config.ExpandedWidth * scale;
 
             return (
                 Config.CollapsedWidth * scale,
-                height,
-                Config.ExpandedWidth * scale,
-                height);
+                idleHeight,
+                mediaWidth,
+                idleHeight,
+                mediaWidth + 60 * scale,
+                Math.Max(72 * scale, idleHeight));
         }
 
-        /// <summary>把媒体态进度 p 应用到胶囊尺寸、圆角裁剪、内容交叉淡入与玻璃参数。</summary>
+        /// <summary>把媒体态进度 p 与详情展开度 d 应用到胶囊尺寸、圆角裁剪、内容与玻璃参数。</summary>
         private void ApplyMorph(double p)
         {
             if (double.IsNaN(p) || double.IsInfinity(p))
@@ -383,11 +404,19 @@ namespace Pynelith.Island.Views
                 _v = 0;
             }
 
+            if (double.IsNaN(_d) || double.IsInfinity(_d))
+            {
+                _d = _detail ? 1 : 0;
+                _dv = 0;
+            }
+
             double pc = Math.Clamp(p, 0, 1);
+            // 详情展开只在媒体态生效
+            double pd = Math.Clamp(_d, 0, 1) * pc;
             var m = Metrics();
 
-            double width = m.IdleW + (m.MediaW - m.IdleW) * pc;
-            double height = m.IdleH + (m.MediaH - m.IdleH) * pc;
+            double width = m.IdleW + (m.MediaW - m.IdleW) * pc + (m.DetailW - m.MediaW) * pd;
+            double height = m.IdleH + (m.MediaH - m.IdleH) * pc + (m.DetailH - m.MediaH) * pd;
 
             CapsuleHost.Width = width;
             CapsuleHost.Height = height;
@@ -417,7 +446,29 @@ namespace Pynelith.Island.Views
             MediaScale.ScaleX = es;
             MediaScale.ScaleY = es;
 
+            ApplyDetailContent(pd);
             ApplyGlassShape(width, height);
+        }
+
+        /// <summary>详情展开度驱动的排版：封面放大、圆角加大、曲目行出现、歌词放大。</summary>
+        private void ApplyDetailContent(double pd)
+        {
+            double coverSize = 20 + 24 * pd;
+            double coverRadius = 7 + 7 * pd;
+
+            CoverFrame.Width = coverSize;
+            CoverFrame.Height = coverSize;
+            CoverClip.Rect = new Rect(0, 0, coverSize, coverSize);
+            CoverClip.RadiusX = coverRadius;
+            CoverClip.RadiusY = coverRadius;
+
+            TrackLabel.Visibility = pd > 0.05 ? Visibility.Visible : Visibility.Collapsed;
+            TrackLabel.Opacity = pd;
+
+            double lyricFont = 11 + 2 * pd;
+            LyricA.FontSize = lyricFont;
+            LyricB.FontSize = lyricFont;
+            LyricHost.Height = 16 + 8 * pd;
         }
 
         /// <summary>把圆角、折射带、染色推给渲染模块（尺寸变化超过阈值才写，避免每帧无谓更新）。</summary>
@@ -457,13 +508,41 @@ namespace Pynelith.Island.Views
 
             if (Config.AnimationDurationMs <= 0 || Math.Abs(_p - _target) < 0.0005)
             {
-                StopSpring();
                 _p = _target;
                 _v = 0;
+                _d = _detail ? 1 : 0;
+                _dv = 0;
+                StopSpring();
                 ApplyMorph(_p);
                 return;
             }
 
+            EnsureSpring();
+        }
+
+        /// <summary>切换详情展开/收起（左键点击胶囊触发）。</summary>
+        private void SetDetail(bool detail)
+        {
+            if (_detail == detail)
+            {
+                return;
+            }
+
+            _detail = detail;
+
+            if (Config.AnimationDurationMs <= 0)
+            {
+                _d = detail ? 1 : 0;
+                _dv = 0;
+                ApplyMorph(_p);
+                return;
+            }
+
+            EnsureSpring();
+        }
+
+        private void EnsureSpring()
+        {
             _lastFrameTicks = Stopwatch.GetTimestamp();
             if (!_springRunning)
             {
@@ -502,23 +581,33 @@ namespace Pynelith.Island.Views
             double k = omega * omega;
             double c = 2 * SpringZeta * omega;
 
-            // 半隐式欧拉积分，帧率无关
+            // 半隐式欧拉积分，帧率无关（主形变与详情展开共用同一组弹簧参数）
             double accel = -k * (_p - _target) - c * _v;
             _v += accel * dt;
             _p += _v * dt;
 
+            double detailTarget = _detail ? 1 : 0;
+            double dAccel = -k * (_d - detailTarget) - c * _dv;
+            _dv += dAccel * dt;
+            _d += _dv * dt;
+
             ApplyMorph(_p);
 
-            if (Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015)
+            bool mainSettled = Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015;
+            bool detailSettled = Math.Abs(_d - detailTarget) < 0.0015 && Math.Abs(_dv) < 0.0015;
+
+            if (mainSettled && detailSettled)
             {
                 _p = _target;
                 _v = 0;
+                _d = detailTarget;
+                _dv = 0;
                 ApplyMorph(_p);
                 StopSpring();
             }
         }
 
-        /// <summary>空闲/媒体形态切换（由媒体会话状态自动驱动，无手动交互）。</summary>
+        /// <summary>空闲/媒体形态切换（由媒体会话状态自动驱动）；离开媒体态时收起详情。</summary>
         private void SetMediaMode(bool media)
         {
             if (_mediaMode == media)
@@ -527,6 +616,12 @@ namespace Pynelith.Island.Views
             }
 
             _mediaMode = media;
+
+            if (!media)
+            {
+                _detail = false;
+            }
+
             AnimateMorphTo(media ? 1 : 0);
             UpdateTexts();
         }
@@ -564,12 +659,31 @@ namespace Pynelith.Island.Views
                 OnTrackChanged();
             }
 
-            PlayButton.Content = _media.IsPlaying ? "⏸" : "▶";
+            SyncPlaybackGlyph();
             CoverImage.Source = _media.Artwork;
             CoverFallback.Visibility = _media.Artwork == null ? Visibility.Visible : Visibility.Collapsed;
 
+            TrackLabel.Text = string.IsNullOrWhiteSpace(_media.Artist)
+                ? _media.Title
+                : _media.Title + " · " + _media.Artist;
+
             bool media = _media.HasSession && !string.IsNullOrWhiteSpace(_media.Title);
             SetMediaMode(media);
+        }
+
+        /// <summary>把播放/暂停图标同步为当前状态；点击后的短暂窗口内不覆盖乐观值。</summary>
+        private void SyncPlaybackGlyph()
+        {
+            if (DateTime.UtcNow < _playGlyphLockUntil)
+            {
+                return;
+            }
+
+            string glyph = _media.IsPlaying ? "⏸" : "▶";
+            if (!Equals(PlayButton.Content, glyph))
+            {
+                PlayButton.Content = glyph;
+            }
         }
 
         private void OnTrackChanged()
@@ -648,7 +762,7 @@ namespace Pynelith.Island.Views
             });
         }
 
-        /// <summary>按播放位置同步当前歌词行（300ms 心跳，带 250ms 提前量）。</summary>
+        /// <summary>按播放位置同步当前歌词行（100ms 心跳，120ms 提前量以抵消切行动画时长）。</summary>
         private void SyncLyricPosition()
         {
             if (!_mediaMode || !Config.LyricsEnabled)
@@ -662,7 +776,7 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            int index = doc.LineAt(_media.Position + TimeSpan.FromMilliseconds(250));
+            int index = doc.LineAt(_media.Position + TimeSpan.FromMilliseconds(120));
             if (index == _lyricIndex)
             {
                 return;
@@ -734,7 +848,20 @@ namespace Pynelith.Island.Views
 
         #region SMTC 播放控制
 
-        private void OnTogglePlay(object sender, RoutedEventArgs e) => _ = _media.TogglePlayPauseAsync();
+        /// <summary>播放/暂停：先乐观切换图标，SMTC 回报后用真实状态校正。</summary>
+        private async void OnTogglePlay(object sender, RoutedEventArgs e)
+        {
+            bool willPlay = !_media.IsPlaying;
+            PlayButton.Content = willPlay ? "⏸" : "▶";
+            _playGlyphLockUntil = DateTime.UtcNow.AddSeconds(1.5);
+
+            await _media.TogglePlayPauseAsync();
+
+            // 命令返回后立刻按最新状态收敛一次；仍与预期不符则等心跳兜底
+            string glyph = _media.IsPlaying ? "⏸" : "▶";
+            PlayButton.Content = glyph;
+            _playGlyphLockUntil = DateTime.UtcNow.AddMilliseconds(400);
+        }
 
         private void OnSkipPrevious(object sender, RoutedEventArgs e) => _ = _media.SkipPreviousAsync();
 
@@ -815,10 +942,10 @@ namespace Pynelith.Island.Views
 
             if (isClick)
             {
-                // 媒体态下点击岛本体 = 播放/暂停（SMTC）；点击完成后钉回停靠位
+                // 左键点击胶囊本体：展开/收起详情（按钮点击由 IsInteractive 过滤，不会走到这里）
                 if (_mediaMode)
                 {
-                    _ = _media.TogglePlayPauseAsync();
+                    SetDetail(!_detail);
                 }
 
                 Reposition();

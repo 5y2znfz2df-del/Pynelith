@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Pynelith Island"
-        Width="400" Height="72"
+        Width="300" Height="72"
         WindowStyle="None"
         ResizeMode="NoResize"
         AllowsTransparency="True"
@@ -23,16 +23,16 @@
         <SolidColorBrush x:Key="AccentBrush" Color="#7BE0FF"/>
 
         <Style x:Key="CompactIconButton" TargetType="Button">
-            <Setter Property="Width" Value="18"/>
-            <Setter Property="Height" Value="18"/>
+            <Setter Property="Width" Value="17"/>
+            <Setter Property="Height" Value="17"/>
             <Setter Property="Foreground" Value="#D9FFFFFF"/>
-            <Setter Property="FontSize" Value="8.5"/>
+            <Setter Property="FontSize" Value="8"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" CornerRadius="9" Background="#1AFFFFFF">
+                        <Border x:Name="Bd" CornerRadius="8.5" Background="#1AFFFFFF">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -103,7 +103,7 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- 媒体态：封面 + 单行歌词 + SMTC 控制（与空闲态同高 28 DIP，仅横向展开） -->
+                <!-- 媒体态：封面 + 歌词（+ 展开后的曲目信息）+ SMTC 控制 -->
                 <Grid x:Name="MediaView" Opacity="0" RenderTransformOrigin="0.5,0.5">
                     <Grid.RenderTransform>
                         <ScaleTransform x:Name="MediaScale" ScaleX="0.94" ScaleY="0.94"/>
@@ -115,8 +115,11 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
-                        <!-- 专辑封面：唯一的曲目身份标识 -->
-                        <Border Width="22" Height="22" CornerRadius="7" ClipToBounds="True" Background="#14FFFFFF">
+                        <!-- 专辑封面：Border 的圆角不会裁子元素，必须用 Clip 才能真正裁出圆角 -->
+                        <Border x:Name="CoverFrame" Width="20" Height="20" Background="#14FFFFFF">
+                            <Border.Clip>
+                                <RectangleGeometry x:Name="CoverClip" Rect="0,0,20,20" RadiusX="7" RadiusY="7"/>
+                            </Border.Clip>
                             <Grid>
                                 <Image x:Name="CoverImage" Stretch="UniformToFill"/>
                                 <Border x:Name="CoverFallback">
@@ -127,7 +130,7 @@
                                         </LinearGradientBrush>
                                     </Border.Background>
                                     <TextBlock Text="♫"
-                                               FontSize="10"
+                                               FontSize="9"
                                                Foreground="#E6FFFFFF"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center"/>
@@ -135,36 +138,43 @@
                             </Grid>
                         </Border>
 
-                        <!-- 歌词行（交叉淡入滚动） -->
-                        <Grid x:Name="LyricHost"
-                              Grid.Column="1"
-                              Height="16"
-                              Margin="9,0,7,0"
-                              VerticalAlignment="Center"
-                              ClipToBounds="True">
-                            <TextBlock x:Name="LyricA"
+                        <!-- 曲目信息（仅展开时显示）+ 歌词行 -->
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0,6,0">
+                            <TextBlock x:Name="TrackLabel"
                                        FontSize="11.5"
+                                       FontWeight="SemiBold"
                                        Foreground="{StaticResource TextPrimary}"
                                        TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center"
-                                       Opacity="0">
-                                <TextBlock.RenderTransform>
-                                    <TranslateTransform x:Name="LyricATrans"/>
-                                </TextBlock.RenderTransform>
-                            </TextBlock>
-                            <TextBlock x:Name="LyricB"
-                                       FontSize="11.5"
-                                       Foreground="{StaticResource TextPrimary}"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center"
-                                       Opacity="0">
-                                <TextBlock.RenderTransform>
-                                    <TranslateTransform x:Name="LyricBTrans"/>
-                                </TextBlock.RenderTransform>
-                            </TextBlock>
-                        </Grid>
+                                       Visibility="Collapsed"
+                                       Margin="0,0,0,1"/>
 
-                        <!-- SMTC 播放控制（紧凑尺寸，28 DIP 内不溢出） -->
+                            <Grid x:Name="LyricHost"
+                                  Height="16"
+                                  ClipToBounds="True">
+                                <TextBlock x:Name="LyricA"
+                                           FontSize="11"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           Opacity="0">
+                                    <TextBlock.RenderTransform>
+                                        <TranslateTransform x:Name="LyricATrans"/>
+                                    </TextBlock.RenderTransform>
+                                </TextBlock>
+                                <TextBlock x:Name="LyricB"
+                                           FontSize="11"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           Opacity="0">
+                                    <TextBlock.RenderTransform>
+                                        <TranslateTransform x:Name="LyricBTrans"/>
+                                    </TextBlock.RenderTransform>
+                                </TextBlock>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- SMTC 播放控制 -->
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button x:Name="PrevButton"
                                     Style="{StaticResource CompactIconButton}"
