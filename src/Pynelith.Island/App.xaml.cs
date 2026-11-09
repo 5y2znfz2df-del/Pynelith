@@ -1,16 +1,19 @@
 using System;
 using System.Windows;
 using Pynelith.Island.Configuration;
+using Pynelith.Island.Services.Lyrics;
+using Pynelith.Island.Services.Media;
 using Pynelith.Island.Views;
 
 namespace Pynelith.Island
 {
     /// <summary>
-    /// 灵动岛宿主。只负责装配：配置服务 + 岛窗口。
+    /// 灵动岛宿主。只负责装配：配置服务 + 媒体会话 + 歌词服务 + 岛窗口。
     /// </summary>
     public partial class App : Application
     {
         private ConfigService? _configService;
+        private MediaSessionService? _media;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -32,10 +35,14 @@ namespace Pynelith.Island
             };
 
             _configService = new ConfigService();
+            _media = new MediaSessionService();
+            var lyrics = new LyricsService(_configService.Config);
 
-            var island = new IslandWindow(_configService);
+            var island = new IslandWindow(_configService, _media, lyrics);
             MainWindow = island;
             island.Show();
+
+            _ = _media.InitializeAsync();
         }
 
         private static void WriteCrashLog(System.Exception? exception)
@@ -65,6 +72,7 @@ namespace Pynelith.Island
 
         protected override void OnExit(ExitEventArgs e)
         {
+            _media?.Dispose();
             _configService?.Dispose();
             base.OnExit(e);
         }
