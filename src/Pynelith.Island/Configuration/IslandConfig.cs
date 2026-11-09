@@ -14,8 +14,8 @@ namespace Pynelith.Island.Configuration
         private double _globalScale = 1.0;
         private double _collapsedWidth = 128;
         private double _collapsedHeight = 28;
-        private double _expandedWidth = 280;
-        private double _expandedHeight = 170;
+        private double _expandedWidth = 400;
+        private double _expandedHeight = 72;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
@@ -25,6 +25,9 @@ namespace Pynelith.Island.Configuration
         private List<string> _notificationBlacklist = new List<string> { "QQ", "企业微信" };
         private bool _lyricsEnabled = true;
         private bool _takeoverNotifications = true;
+        private bool _lyricsSourceNetease = true;
+        private bool _lyricsSourceQQ = true;
+        private bool _lyricsSourceKugou = true;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -49,18 +52,18 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _collapsedHeight, Math.Clamp(value, 24, 96));
         }
 
-        /// <summary>展开宽度（DIP，缩放前）。</summary>
+        /// <summary>媒体态宽度（DIP，缩放前）。</summary>
         public double ExpandedWidth
         {
             get => _expandedWidth;
-            set => Set(ref _expandedWidth, Math.Clamp(value, 260, 900));
+            set => Set(ref _expandedWidth, Math.Clamp(value, 240, 900));
         }
 
-        /// <summary>展开高度（DIP，缩放前）。</summary>
+        /// <summary>媒体态高度（DIP，缩放前）。</summary>
         public double ExpandedHeight
         {
             get => _expandedHeight;
-            set => Set(ref _expandedHeight, Math.Clamp(value, 120, 640));
+            set => Set(ref _expandedHeight, Math.Clamp(value, 48, 400));
         }
 
         /// <summary>相对「顶部居中」停靠点的 X 偏移（DIP，正值向右）。</summary>
@@ -129,6 +132,27 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _takeoverNotifications, value);
         }
 
+        /// <summary>启用网易云音乐歌词源。</summary>
+        public bool LyricsSourceNetease
+        {
+            get => _lyricsSourceNetease;
+            set => Set(ref _lyricsSourceNetease, value);
+        }
+
+        /// <summary>启用QQ音乐歌词源。</summary>
+        public bool LyricsSourceQQ
+        {
+            get => _lyricsSourceQQ;
+            set => Set(ref _lyricsSourceQQ, value);
+        }
+
+        /// <summary>启用酷狗音乐歌词源。</summary>
+        public bool LyricsSourceKugou
+        {
+            get => _lyricsSourceKugou;
+            set => Set(ref _lyricsSourceKugou, value);
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -148,6 +172,9 @@ namespace Pynelith.Island.Configuration
             NotificationBlacklist = new List<string>(defaults.NotificationBlacklist);
             LyricsEnabled = defaults.LyricsEnabled;
             TakeoverNotifications = defaults.TakeoverNotifications;
+            LyricsSourceNetease = defaults.LyricsSourceNetease;
+            LyricsSourceQQ = defaults.LyricsSourceQQ;
+            LyricsSourceKugou = defaults.LyricsSourceKugou;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
