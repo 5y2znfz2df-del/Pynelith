@@ -7,6 +7,7 @@
     <RootNamespace>Pynelith.Setup</RootNamespace>
     <AssemblyName>PynelithSetup</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\icon\pynelith.ico</ApplicationIcon>
     <Description>Pynelith 安装程序：选择安装路径、释放程序文件、创建快捷方式并注册卸载信息</Description>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -15,6 +16,10 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\icon\pynelith.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- 载荷：Pynelith.Island 的自包含单文件产物（构建安装包前需先发布该 exe） -->

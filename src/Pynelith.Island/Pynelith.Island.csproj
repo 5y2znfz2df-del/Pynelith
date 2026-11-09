@@ -8,6 +8,7 @@
     <RootNamespace>Pynelith.Island</RootNamespace>
     <AssemblyName>Pynelith.Island</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\icon\pynelith.ico</ApplicationIcon>
     <Description>灵动岛本体模块：悬浮动态岛、停靠定位、展开/收起动画、设置窗口与 JSON 配置（玻璃效果全部委托 Pynelith.Glass）</Description>
   </PropertyGroup>
 

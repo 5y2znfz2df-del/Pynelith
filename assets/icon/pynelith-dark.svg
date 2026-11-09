@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-label="Pynelith 深色图标">
+  <title>Pynelith — dark</title>
+  <defs>
+    <linearGradient id="pl-bg-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C2129"/>
+      <stop offset="1" stop-color="#07090C"/>
+    </linearGradient>
+    <linearGradient id="pl-gloss-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 底板：圆角方（squircle 视觉），对应 Windows/macOS 图标安全区 -->
+  <rect x="28" y="28" width="456" height="456" rx="102" fill="url(#pl-bg-dark)"/>
+  <rect x="28.5" y="28.5" width="455" height="455" rx="101.5" stroke="#FFFFFF" stroke-opacity="0.14"/>
+
+  <!-- 灵动岛胶囊 -->
+  <rect x="96.5" y="198" width="319" height="116" rx="58" fill="#232933"/>
+  <rect x="96.5" y="198" width="319" height="116" rx="58" fill="url(#pl-gloss-dark)"/>
+  <rect x="96.5" y="198" width="319" height="116" rx="58" stroke="#FFFFFF" stroke-opacity="0.15"/>
+
+  <!-- 音频波形（唯一识别符号，青色 = 深色模式强调色） -->
+  <g fill="#7BE0FF">
+    <rect x="175" y="245.4" width="18" height="21.3" rx="9"/>
+    <rect x="211" y="235.4" width="18" height="41.3" rx="9"/>
+    <rect x="247" y="224.7" width="18" height="62.6" rx="9"/>
+    <rect x="283" y="235.4" width="18" height="41.3" rx="9"/>
+    <rect x="319" y="245.4" width="18" height="21.3" rx="9"/>
+  </g>
+</svg>

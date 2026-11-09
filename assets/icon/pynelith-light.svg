@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-label="Pynelith 浅色图标">
+  <title>Pynelith — light</title>
+  <defs>
+    <linearGradient id="pl-bg-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DBE7F8"/>
+    </linearGradient>
+    <linearGradient id="pl-gloss-light" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="28" y="28" width="456" height="456" rx="102" fill="url(#pl-bg-light)"/>
+  <rect x="28.5" y="28.5" width="455" height="455" rx="101.5" stroke="#33558C" stroke-opacity="0.19"/>
+
+  <rect x="96.5" y="198" width="319" height="116" rx="58" fill="#F5F9FF"/>
+  <rect x="96.5" y="198" width="319" height="116" rx="58" fill="url(#pl-gloss-light)"/>
+  <rect x="96.5" y="198" width="319" height="116" rx="58" stroke="#2F6FED" stroke-opacity="0.22"/>
+
+  <g fill="#2F6FED">
+    <rect x="175" y="245.4" width="18" height="21.3" rx="9"/>
+    <rect x="211" y="235.4" width="18" height="41.3" rx="9"/>
+    <rect x="247" y="224.7" width="18" height="62.6" rx="9"/>
+    <rect x="283" y="235.4" width="18" height="41.3" rx="9"/>
+    <rect x="319" y="245.4" width="18" height="21.3" rx="9"/>
+  </g>
+</svg>
