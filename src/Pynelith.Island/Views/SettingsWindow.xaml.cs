@@ -219,10 +219,9 @@ namespace Pynelith.Island.Views
                 () => Config.CollapsedHeight, v => Config.CollapsedHeight = v);
 
             var expanded = NewGroup(page, "媒体尺寸");
-            AddStepper(expanded, "宽度", 240, 900, 4, 0,
+            AddStepper(expanded, "宽度", 200, 900, 4, 0,
                 () => Config.ExpandedWidth, v => Config.ExpandedWidth = v);
-            AddStepper(expanded, "高度", 48, 400, 2, 0,
-                () => Config.ExpandedHeight, v => Config.ExpandedHeight = v);
+            AddNote(expanded, "高度", "始终与空闲态一致，避免遮挡视野");
 
             var offset = NewGroup(page, "屏幕偏移");
             AddStepper(offset, "水平偏移 X", -800, 800, 2, 0,

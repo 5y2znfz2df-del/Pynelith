@@ -14,8 +14,7 @@ namespace Pynelith.Island.Configuration
         private double _globalScale = 1.0;
         private double _collapsedWidth = 128;
         private double _collapsedHeight = 28;
-        private double _expandedWidth = 400;
-        private double _expandedHeight = 72;
+        private double _expandedWidth = 288;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
@@ -52,18 +51,11 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _collapsedHeight, Math.Clamp(value, 24, 96));
         }
 
-        /// <summary>媒体态宽度（DIP，缩放前）。</summary>
+        /// <summary>媒体态宽度（DIP，缩放前）。高度始终与空闲态一致，避免遮挡视野。</summary>
         public double ExpandedWidth
         {
             get => _expandedWidth;
-            set => Set(ref _expandedWidth, Math.Clamp(value, 240, 900));
-        }
-
-        /// <summary>媒体态高度（DIP，缩放前）。</summary>
-        public double ExpandedHeight
-        {
-            get => _expandedHeight;
-            set => Set(ref _expandedHeight, Math.Clamp(value, 48, 400));
+            set => Set(ref _expandedWidth, Math.Clamp(value, 200, 900));
         }
 
         /// <summary>相对「顶部居中」停靠点的 X 偏移（DIP，正值向右）。</summary>
@@ -162,7 +154,6 @@ namespace Pynelith.Island.Configuration
             CollapsedWidth = defaults.CollapsedWidth;
             CollapsedHeight = defaults.CollapsedHeight;
             ExpandedWidth = defaults.ExpandedWidth;
-            ExpandedHeight = defaults.ExpandedHeight;
             ScreenOffsetX = defaults.ScreenOffsetX;
             ScreenOffsetY = defaults.ScreenOffsetY;
             GlassBlurStrength = defaults.GlassBlurStrength;

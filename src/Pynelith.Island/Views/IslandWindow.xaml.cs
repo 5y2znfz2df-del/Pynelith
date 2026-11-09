@@ -10,7 +10,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Pynelith.Glass.Effects;
 using Pynelith.Island.Configuration;
@@ -345,12 +344,12 @@ namespace Pynelith.Island.Views
 
         #endregion
 
-        /// <summary>窗口固定为媒体态尺寸；胶囊在窗口内顶部居中，空闲态也天然居中。</summary>
+        /// <summary>窗口固定为媒体态宽度；高度始终等于空闲态高度，避免遮挡视野。</summary>
         private void ApplyWindowSize()
         {
             double scale = Config.GlobalScale;
-            Width = Math.Max(120, Config.ExpandedWidth * scale);
-            Height = Math.Max(56, Config.ExpandedHeight * scale);
+            Width = Math.Max(160, Config.ExpandedWidth * scale);
+            Height = Math.Max(24, Config.CollapsedHeight * scale);
 
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
@@ -362,14 +361,17 @@ namespace Pynelith.Island.Views
 
         #region 弹簧形变（加固版）
 
+        /// <summary>两种形态高度恒定（等于空闲高度），只有宽度随媒体态展开。</summary>
         private (double IdleW, double IdleH, double MediaW, double MediaH) Metrics()
         {
             double scale = Config.GlobalScale;
+            double height = Config.CollapsedHeight * scale;
+
             return (
                 Config.CollapsedWidth * scale,
-                Config.CollapsedHeight * scale,
+                height,
                 Config.ExpandedWidth * scale,
-                Config.ExpandedHeight * scale);
+                height);
         }
 
         /// <summary>把媒体态进度 p 应用到胶囊尺寸、圆角裁剪、内容交叉淡入与玻璃参数。</summary>
@@ -566,9 +568,6 @@ namespace Pynelith.Island.Views
             CoverImage.Source = _media.Artwork;
             CoverFallback.Visibility = _media.Artwork == null ? Visibility.Visible : Visibility.Collapsed;
 
-            MediaTitle.Text = string.IsNullOrWhiteSpace(_media.Title) ? "未知曲目" : _media.Title;
-            MediaArtist.Text = _media.Artist;
-
             bool media = _media.HasSession && !string.IsNullOrWhiteSpace(_media.Title);
             SetMediaMode(media);
         }
@@ -690,6 +689,8 @@ namespace Pynelith.Island.Views
             {
                 outgoing.BeginAnimation(OpacityProperty, Fade(outgoing.Opacity, 0, durationMs, ease));
                 outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -12, durationMs, ease));
+                incoming.BeginAnimation(OpacityProperty, null);
+                incoming.Text = string.Empty;
                 incoming.Opacity = 0;
                 return;
             }
@@ -714,6 +715,7 @@ namespace Pynelith.Island.Views
 
             active.Text = text;
             active.Opacity = string.IsNullOrEmpty(text) ? 0 : 1;
+            idle.Text = string.Empty;
             idle.Opacity = 0;
             ((TranslateTransform)active.RenderTransform).Y = 0;
             ((TranslateTransform)idle.RenderTransform).Y = 0;
