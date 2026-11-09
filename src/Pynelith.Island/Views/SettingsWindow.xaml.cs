@@ -8,6 +8,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
+using Pynelith.Island.Services.Lyrics;
+using Pynelith.Island.Services.Media;
 
 namespace Pynelith.Island.Views
 {
@@ -24,6 +26,8 @@ namespace Pynelith.Island.Views
         private static readonly Brush FieldBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x3A, 0x3A, 0x3D));
 
         private readonly ConfigService _service;
+        private readonly LyricsService _lyrics;
+        private readonly MediaSessionService _media;
         private readonly List<Action> _refreshers = new List<Action>();
         private readonly Dictionary<string, UIElement> _pages = new Dictionary<string, UIElement>();
         private readonly Dictionary<string, Button> _sideButtons = new Dictionary<string, Button>();
@@ -33,9 +37,11 @@ namespace Pynelith.Island.Views
 
         private IslandConfig Config => _service.Config;
 
-        public SettingsWindow(ConfigService service)
+        public SettingsWindow(ConfigService service, LyricsService lyrics, MediaSessionService media)
         {
             _service = service;
+            _lyrics = lyrics;
+            _media = media;
 
             InitializeComponent();
 
@@ -206,16 +212,16 @@ namespace Pynelith.Island.Views
         {
             var page = NewPage();
 
-            var collapsed = NewGroup(page, "收起尺寸");
-            AddStepper(collapsed, "宽度", 160, 360, 2, 0,
+            var collapsed = NewGroup(page, "空闲尺寸");
+            AddStepper(collapsed, "宽度", 120, 480, 2, 0,
                 () => Config.CollapsedWidth, v => Config.CollapsedWidth = v);
-            AddStepper(collapsed, "高度", 28, 72, 1, 0,
+            AddStepper(collapsed, "高度", 24, 96, 1, 0,
                 () => Config.CollapsedHeight, v => Config.CollapsedHeight = v);
 
-            var expanded = NewGroup(page, "展开尺寸");
-            AddStepper(expanded, "宽度", 300, 680, 4, 0,
+            var expanded = NewGroup(page, "媒体尺寸");
+            AddStepper(expanded, "宽度", 240, 900, 4, 0,
                 () => Config.ExpandedWidth, v => Config.ExpandedWidth = v);
-            AddStepper(expanded, "高度", 160, 420, 4, 0,
+            AddStepper(expanded, "高度", 48, 400, 2, 0,
                 () => Config.ExpandedHeight, v => Config.ExpandedHeight = v);
 
             var offset = NewGroup(page, "屏幕偏移");
@@ -274,8 +280,56 @@ namespace Pynelith.Island.Views
             var lyrics = NewGroup(page, "歌词");
             AddToggle(lyrics, "显示歌词行",
                 () => Config.LyricsEnabled, v => Config.LyricsEnabled = v);
+            AddToggle(lyrics, "网易云音乐歌词源",
+                () => Config.LyricsSourceNetease, v => Config.LyricsSourceNetease = v);
+            AddToggle(lyrics, "QQ音乐歌词源",
+                () => Config.LyricsSourceQQ, v => Config.LyricsSourceQQ = v);
+            AddToggle(lyrics, "酷狗音乐歌词源",
+                () => Config.LyricsSourceKugou, v => Config.LyricsSourceKugou = v);
+            AddButton(lyrics, "导入 LRC 歌词…", OnImportLrc);
+            AddNote(lyrics, "歌词缓存", LyricsService.LyricsDirectory);
+            AddNote(lyrics, "匹配方式", "按正在播放曲目的「标题 + 歌手」自动匹配，可手动导入覆盖");
+
+            var control = NewGroup(page, "播放控制");
+            AddNote(control, "控制通道", "SMTC 系统媒体传输控件（全局会话自动扫描）");
+            AddNote(control, "可用操作", "播放 / 暂停、上一首、下一首；点击岛本体 = 播放/暂停");
 
             return page;
+        }
+
+        private void OnImportLrc()
+        {
+            if (string.IsNullOrWhiteSpace(_media.Title))
+            {
+                MessageBox.Show(this,
+                    "请先在任意播放器播放一首歌，再把对应的 LRC 歌词导入到该曲目。",
+                    "Pynelith", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "导入 LRC 歌词",
+                Filter = "LRC 歌词|*.lrc;*.txt|所有文件|*.*",
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            try
+            {
+                _lyrics.ImportLrc(dialog.FileName, _media.Title, _media.Artist);
+                MessageBox.Show(this,
+                    string.Format("已关联到《{0}》，歌词立即生效。", _media.Title),
+                    "Pynelith", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "导入失败：" + ex.Message, "Pynelith",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         #endregion
@@ -341,6 +395,61 @@ namespace Pynelith.Island.Views
             row.Children.Add(toggle);
 
             _refreshers.Add(() => toggle.IsChecked = read());
+        }
+
+        private void AddButton(StackPanel rows, string label, Action onClick)
+        {
+            var row = NewRow(rows, label);
+
+            var button = new Button
+            {
+                Content = label,
+                Cursor = Cursors.Hand,
+                Foreground = TextPrimary,
+                FontSize = 12,
+                Padding = new Thickness(14, 5, 14, 5),
+                VerticalAlignment = VerticalAlignment.Center,
+                Template = DarkButtonTemplate(),
+            };
+            button.Click += (_, _) => onClick();
+
+            Grid.SetColumn(button, 1);
+            row.Children.Add(button);
+        }
+
+        private static ControlTemplate DarkButtonTemplate()
+        {
+            var factory = new FrameworkElementFactory(typeof(Border));
+            factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+            factory.SetValue(Border.BackgroundProperty, FieldBrush);
+            factory.SetValue(Border.PaddingProperty, new Thickness(14, 5, 14, 5));
+
+            var content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            factory.AppendChild(content);
+
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = factory };
+
+            var hover = new Trigger
+            {
+                Property = UIElement.IsMouseOverProperty,
+                Value = true,
+            };
+            hover.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(Color.FromArgb(0xFF, 0x47, 0x47, 0x4B))));
+            template.Triggers.Add(hover);
+
+            var pressed = new Trigger
+            {
+                Property = ButtonBase.IsPressedProperty,
+                Value = true,
+            };
+            pressed.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(Color.FromArgb(0xFF, 0x23, 0x23, 0x26))));
+            template.Triggers.Add(pressed);
+
+            return template;
         }
 
         private void AddStepper(
