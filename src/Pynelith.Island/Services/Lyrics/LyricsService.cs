@@ -70,6 +70,14 @@ namespace Pynelith.Island.Services.Lyrics
                 return fromDisk;
             }
 
+            // 同一首歌在不同播放器上报的歌手名可能不同，按标题回退命中已有缓存
+            LrcDocument byTitle = TryFindByTitle(title);
+            if (!byTitle.IsEmpty)
+            {
+                Remember(key, byTitle);
+                return byTitle;
+            }
+
             foreach (ILyricsProvider provider in EnabledProviders())
             {
                 ct.ThrowIfCancellationRequested();
@@ -168,6 +176,43 @@ namespace Pynelith.Island.Services.Lyrics
             {
                 return LrcDocument.Empty;
             }
+        }
+
+        /// <summary>按标题在缓存目录里模糊回退（忽略歌手名差异）。</summary>
+        private static LrcDocument TryFindByTitle(string title)
+        {
+            try
+            {
+                if (!Directory.Exists(LyricsDirectory))
+                {
+                    return LrcDocument.Empty;
+                }
+
+                string target = LyricsMatch.Normalize(title);
+                if (target.Length < 3)
+                {
+                    return LrcDocument.Empty;
+                }
+
+                foreach (string file in Directory.EnumerateFiles(LyricsDirectory, "*.lrc"))
+                {
+                    string name = LyricsMatch.Normalize(Path.GetFileNameWithoutExtension(file));
+                    if (name.Contains(target))
+                    {
+                        LrcDocument doc = LrcDocument.Parse(File.ReadAllText(file));
+                        if (!doc.IsEmpty)
+                        {
+                            return doc;
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 回退失败时交给在线歌词源。
+            }
+
+            return LrcDocument.Empty;
         }
 
         private static void SaveToDisk(string key, string lrcText)

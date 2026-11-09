@@ -95,6 +95,14 @@ namespace Pynelith.Island.Services.Lyrics
                 return Empty;
             }
 
+            // 去掉 [00:00] 作词/作曲 这类制作信息行：它们不是歌词，
+            // 显示在岛上会占掉唯一的一行歌词位。全部是元信息时保留原样。
+            var lyricOnly = lines.FindAll(line => !IsMetadataLine(line.Text));
+            if (lyricOnly.Count > 0)
+            {
+                lines = lyricOnly;
+            }
+
             if (offsetMs != 0)
             {
                 var shift = TimeSpan.FromMilliseconds(offsetMs);
@@ -132,6 +140,39 @@ namespace Pynelith.Island.Services.Lyrics
             }
 
             return lo;
+        }
+
+        private static readonly string[] MetadataPrefixes =
+        {
+            "作词", "作曲", "编曲", "制作人", "出品", "监制", "混音", "母带", "录音",
+            "和声", "吉他", "贝斯", "鼓", "词", "曲", "OP", "SP", "发行", "统筹", "策划",
+        };
+
+        /// <summary>判断是否为「作词：xxx」这类制作信息行（前缀后必须是冒号或空白）。</summary>
+        private static bool IsMetadataLine(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return true;
+            }
+
+            string trimmed = text.TrimStart();
+            foreach (string prefix in MetadataPrefixes)
+            {
+                if (trimmed.Length <= prefix.Length
+                    || !trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                char next = trimmed[prefix.Length];
+                if (next == ':' || next == '：' || char.IsWhiteSpace(next))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool TryParseTimestamp(string tag, out TimeSpan time)

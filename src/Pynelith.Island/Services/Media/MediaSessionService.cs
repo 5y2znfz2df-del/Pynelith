@@ -18,10 +18,16 @@ namespace Pynelith.Island.Services.Media
     /// </summary>
     public sealed class MediaSessionService : IDisposable
     {
+        /// <summary>与播放器时间轴比对时的容差：小于该偏差视为推算更可靠。</summary>
+        private static readonly TimeSpan TimelineTolerance = TimeSpan.FromSeconds(1.5);
+
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _session;
         private readonly DispatcherTimer _positionTimer;
         private TimeSpan _positionBase;
+        private DateTime _positionStampUtc = DateTime.UtcNow;
+        private TimeSpan _lastSmtcPosition = TimeSpan.MinValue;
+        private bool _isPlaying;
         private bool _disposed;
 
         /// <summary>任何状态变化（会话切换、曲目、播放状态、时间轴、封面）。</summary>
@@ -31,22 +37,35 @@ namespace Pynelith.Island.Services.Media
         public string Title { get; private set; } = string.Empty;
         public string Artist { get; private set; } = string.Empty;
         public BitmapImage? Artwork { get; private set; }
-        public bool IsPlaying { get; private set; }
+        public bool IsPlaying => _isPlaying;
         public TimeSpan Duration { get; private set; }
         public string SourceApp { get; private set; } = string.Empty;
 
-        /// <summary>当前播放位置（播放中按最近一次时间轴快照推算）。</summary>
+        /// <summary>
+        /// 当前播放位置：以最近一次时间轴快照为基线，播放中按经过的真实时间推算，
+        /// 保证歌词逐行推进（部分播放器的 SMTC 时间轴不会持续刷新）。
+        /// </summary>
         public TimeSpan Position
         {
             get
             {
                 TimeSpan pos = _positionBase;
+                if (_isPlaying)
+                {
+                    pos += DateTime.UtcNow - _positionStampUtc;
+                }
+
+                if (pos < TimeSpan.Zero)
+                {
+                    pos = TimeSpan.Zero;
+                }
+
                 if (Duration > TimeSpan.Zero && pos > Duration)
                 {
                     pos = Duration;
                 }
 
-                return pos < TimeSpan.Zero ? TimeSpan.Zero : pos;
+                return pos;
             }
         }
 
@@ -164,9 +183,10 @@ namespace Pynelith.Island.Services.Media
                 Artist = string.Empty;
                 SourceApp = string.Empty;
                 Artwork = null;
-                IsPlaying = false;
+                _isPlaying = false;
                 Duration = TimeSpan.Zero;
                 _positionBase = TimeSpan.Zero;
+                _positionStampUtc = DateTime.UtcNow;
                 Raise();
                 return;
             }
@@ -183,6 +203,11 @@ namespace Pynelith.Island.Services.Media
             {
                 SourceApp = string.Empty;
             }
+
+            // 切歌后位置归零，避免沿用上一首的时间轴导致歌词错位
+            _positionBase = TimeSpan.Zero;
+            _positionStampUtc = DateTime.UtcNow;
+            _lastSmtcPosition = TimeSpan.MinValue;
 
             UpdatePlaybackInfo();
             UpdateTimeline();
@@ -288,13 +313,26 @@ namespace Pynelith.Island.Services.Media
 
         private void UpdatePlaybackInfo()
         {
+            bool playing;
             try
             {
-                IsPlaying = IsPlayingStatus(_session?.GetPlaybackInfo());
+                playing = IsPlayingStatus(_session?.GetPlaybackInfo());
             }
             catch (Exception)
             {
-                IsPlaying = false;
+                playing = false;
+            }
+
+            if (playing != _isPlaying)
+            {
+                // 结算到此刻：暂停后不再继续推进，恢复播放时从新基线起算
+                if (!playing)
+                {
+                    _positionBase = Position;
+                }
+
+                _isPlaying = playing;
+                _positionStampUtc = DateTime.UtcNow;
             }
 
             Raise();
@@ -307,7 +345,7 @@ namespace Pynelith.Island.Services.Media
                 var timeline = _session?.GetTimelineProperties();
                 if (timeline != null)
                 {
-                    _positionBase = timeline.Position;
+                    ApplyTimeline(timeline.Position);
                     Duration = timeline.EndTime > timeline.StartTime
                         ? timeline.EndTime - timeline.StartTime
                         : TimeSpan.Zero;
@@ -323,7 +361,7 @@ namespace Pynelith.Island.Services.Media
 
         private void RefreshTimelineIfPlaying()
         {
-            if (_disposed || _session == null || !IsPlaying)
+            if (_disposed || _session == null || !_isPlaying)
             {
                 return;
             }
@@ -333,12 +371,34 @@ namespace Pynelith.Island.Services.Media
                 var timeline = _session.GetTimelineProperties();
                 if (timeline != null)
                 {
-                    _positionBase = timeline.Position;
+                    ApplyTimeline(timeline.Position);
                 }
             }
             catch (Exception)
             {
                 // 忽略瞬时失败，下一拍再试。
+            }
+        }
+
+        /// <summary>
+        /// 采用播放器上报的时间轴位置：只在播放器确实更新了数值（换歌/拖动进度）且偏差
+        /// 超过容差时校正。部分播放器的 SMTC 时间轴长期停在起点，若无条件采用会把
+        /// 歌词一直拉回第一行，因此停滞的时间轴必须忽略。
+        /// </summary>
+        private void ApplyTimeline(TimeSpan smtcPosition)
+        {
+            if (smtcPosition == _lastSmtcPosition)
+            {
+                return;
+            }
+
+            _lastSmtcPosition = smtcPosition;
+
+            TimeSpan extrapolated = Position;
+            if ((smtcPosition - extrapolated).Duration() > TimelineTolerance)
+            {
+                _positionBase = smtcPosition;
+                _positionStampUtc = DateTime.UtcNow;
             }
         }
 
