@@ -87,6 +87,8 @@ namespace Pynelith.Island.Views
         private CancellationTokenSource? _lyricLookupCts;
         private bool _lyricShowingA;
         private string _currentLyricText = string.Empty;
+        private int _lastAppliedLyricOffset;
+        private int _lyricSourceMask = -1;
 
         private IslandConfig Config => _service.Config;
 
@@ -291,10 +293,28 @@ namespace Pynelith.Island.Views
             UpdateTexts();
             Reposition();
 
-            // 歌词开关打开时对当前曲目重新匹配
-            if (Config.LyricsEnabled && _mediaMode && !string.IsNullOrWhiteSpace(_media.Title))
+            // 只有歌词开关/歌词源变化才重新匹配；单纯调偏移不应触发重新查询
+            int sourceMask = (Config.LyricsEnabled ? 1 : 0)
+                | (Config.LyricsSourceNetease ? 2 : 0)
+                | (Config.LyricsSourceQQ ? 4 : 0)
+                | (Config.LyricsSourceKugou ? 8 : 0);
+
+            if (sourceMask != _lyricSourceMask)
             {
-                BeginLyricLookup(_media.Title, _media.Artist);
+                _lyricSourceMask = sourceMask;
+
+                if (Config.LyricsEnabled && _mediaMode && !string.IsNullOrWhiteSpace(_media.Title))
+                {
+                    BeginLyricLookup(_media.Title, _media.Artist);
+                }
+            }
+
+            // 偏移变化要立即重算当前行（设置页调整后无需重启）
+            if (_lastAppliedLyricOffset != Config.LyricOffsetMs)
+            {
+                _lastAppliedLyricOffset = Config.LyricOffsetMs;
+                _lyricIndex = -2;
+                SyncLyricPosition();
             }
         }
 
@@ -667,6 +687,40 @@ namespace Pynelith.Island.Views
         }
 
         private SettingsWindow? _settingsWindow;
+
+        /// <summary>右键菜单打开时把当前偏移量显示在标题上，便于边听边调。</summary>
+        private void OnIslandMenuOpened(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ContextMenu menu || menu.Items.Count < 3)
+            {
+                return;
+            }
+
+            string suffix = string.Format("（当前 {0:+0;-0;0}ms）", Config.LyricOffsetMs);
+            if (menu.Items[0] is MenuItem earlier)
+            {
+                earlier.Header = "歌词提前 200ms" + suffix;
+            }
+
+            if (menu.Items[1] is MenuItem later)
+            {
+                later.Header = "歌词延后 200ms" + suffix;
+            }
+        }
+
+        private void OnLyricEarlier(object sender, RoutedEventArgs e) => NudgeLyricOffset(200);
+
+        private void OnLyricLater(object sender, RoutedEventArgs e) => NudgeLyricOffset(-200);
+
+        private void OnLyricOffsetReset(object sender, RoutedEventArgs e) => NudgeLyricOffset(-Config.LyricOffsetMs);
+
+        /// <summary>调整歌词整体偏移并立即重算当前行，无需重启。</summary>
+        private void NudgeLyricOffset(int deltaMs)
+        {
+            Config.LyricOffsetMs = Config.LyricOffsetMs + deltaMs;
+            _lyricIndex = -2;
+            SyncLyricPosition();
+        }
 
         private void OnOpenSettings(object sender, RoutedEventArgs e)
         {

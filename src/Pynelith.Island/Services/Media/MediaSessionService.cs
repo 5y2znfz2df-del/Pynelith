@@ -27,6 +27,7 @@ namespace Pynelith.Island.Services.Media
         private TimeSpan _positionBase;
         private DateTime _positionStampUtc = DateTime.UtcNow;
         private TimeSpan _lastSmtcPosition = TimeSpan.MinValue;
+        private bool _timelineReliable;
         private bool _isPlaying;
         private bool _disposed;
 
@@ -237,6 +238,7 @@ namespace Pynelith.Island.Services.Media
             _positionBase = TimeSpan.Zero;
             _positionStampUtc = DateTime.UtcNow;
             _lastSmtcPosition = TimeSpan.MinValue;
+            _timelineReliable = false;
 
             UpdatePlaybackInfo();
             UpdateTimeline();
@@ -289,8 +291,23 @@ namespace Pynelith.Island.Services.Media
                     return;
                 }
 
-                Title = props?.Title ?? string.Empty;
-                Artist = props?.Artist ?? string.Empty;
+                string newTitle = props?.Title ?? string.Empty;
+                string newArtist = props?.Artist ?? string.Empty;
+                bool trackChanged = !string.Equals(newTitle, Title, StringComparison.Ordinal)
+                    || !string.Equals(newArtist, Artist, StringComparison.Ordinal);
+
+                Title = newTitle;
+                Artist = newArtist;
+
+                if (trackChanged && !_timelineReliable)
+                {
+                    // 播放器不上报进度（如网易云）：把「曲目元数据变化」的时刻当作新歌的 0 点，
+                    // 这样换歌后歌词与音频基本同步（事件延迟通常在 100ms 内）。
+                    _positionBase = TimeSpan.Zero;
+                    _positionStampUtc = DateTime.UtcNow;
+                    _lastSmtcPosition = TimeSpan.MinValue;
+                }
+
                 Raise();
 
                 var thumbnail = props?.Thumbnail;
@@ -434,6 +451,12 @@ namespace Pynelith.Island.Services.Media
             bool changed = smtcPosition != _lastSmtcPosition;
             bool advanced = smtcPosition > _lastSmtcPosition;
             _lastSmtcPosition = smtcPosition;
+
+            if (smtcPosition > TimeSpan.Zero)
+            {
+                // 出现过非零且变化的位置，说明这个播放器确实在上报进度
+                _timelineReliable = true;
+            }
 
             if (!changed)
             {

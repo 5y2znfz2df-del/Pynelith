@@ -48,10 +48,6 @@
             </Setter>
         </Style>
 
-        <ContextMenu x:Key="IslandMenu">
-            <MenuItem Header="设置" Click="OnOpenSettings"/>
-            <MenuItem Header="退出 Pynelith" Click="OnExit"/>
-        </ContextMenu>
     </Window.Resources>
 
     <!-- 窗口固定为最大形态尺寸（展开态）；真正的"岛"是 CapsuleHost，弹簧只改它的宽高。
@@ -64,10 +60,21 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Top"
               Width="124" Height="24"
-              ContextMenu="{StaticResource IslandMenu}"
               MouseLeftButtonDown="OnIslandMouseLeftButtonDown"
               MouseMove="OnIslandMouseMove"
               MouseLeftButtonUp="OnIslandMouseLeftButtonUp">
+
+            <!-- 右键菜单内联定义：避免共享资源实例导致弹不出 -->
+            <Grid.ContextMenu>
+                <ContextMenu Opened="OnIslandMenuOpened">
+                    <MenuItem Header="歌词提前 200ms" Click="OnLyricEarlier"/>
+                    <MenuItem Header="歌词延后 200ms" Click="OnLyricLater"/>
+                    <MenuItem Header="歌词偏移归零" Click="OnLyricOffsetReset"/>
+                    <Separator/>
+                    <MenuItem Header="设置" Click="OnOpenSettings"/>
+                    <MenuItem Header="退出 Pynelith" Click="OnExit"/>
+                </ContextMenu>
+            </Grid.ContextMenu>
 
             <!-- 设计尺寸 = 胶囊尺寸（缩放前），ContentScale 统一放大 -->
             <Grid x:Name="ContentHost"
