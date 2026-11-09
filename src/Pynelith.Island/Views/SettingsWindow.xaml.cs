@@ -285,8 +285,11 @@ namespace Pynelith.Island.Views
                 () => Config.LyricsSourceQQ, v => Config.LyricsSourceQQ = v);
             AddToggle(lyrics, "酷狗音乐歌词源",
                 () => Config.LyricsSourceKugou, v => Config.LyricsSourceKugou = v);
+            AddStepper(lyrics, "时间偏移 (ms)", -2000, 2000, 50, 0,
+                () => Config.LyricOffsetMs, v => Config.LyricOffsetMs = (int)v);
             AddButton(lyrics, "导入 LRC 歌词…", OnImportLrc);
             AddNote(lyrics, "歌词缓存", LyricsService.LyricsDirectory);
+            AddNote(lyrics, "时间偏移", "正值让歌词提前出现，用于对齐整体偏快/偏慢的歌词源");
             AddNote(lyrics, "匹配方式", "按正在播放曲目的「标题 + 歌手」自动匹配，可手动导入覆盖");
 
             var control = NewGroup(page, "播放控制");

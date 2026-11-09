@@ -27,6 +27,7 @@ namespace Pynelith.Island.Configuration
         private bool _lyricsSourceNetease = true;
         private bool _lyricsSourceQQ = true;
         private bool _lyricsSourceKugou = true;
+        private int _lyricOffsetMs;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -145,6 +146,16 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _lyricsSourceKugou, value);
         }
 
+        /// <summary>
+        /// 歌词整体时间偏移（毫秒，正值 = 歌词提前显示）。
+        /// 不同歌词源的 LRC 与本地音频可能有固定偏差，用它可以整首对齐。
+        /// </summary>
+        public int LyricOffsetMs
+        {
+            get => _lyricOffsetMs;
+            set => Set(ref _lyricOffsetMs, Math.Clamp(value, -2000, 2000));
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -166,6 +177,7 @@ namespace Pynelith.Island.Configuration
             LyricsSourceNetease = defaults.LyricsSourceNetease;
             LyricsSourceQQ = defaults.LyricsSourceQQ;
             LyricsSourceKugou = defaults.LyricsSourceKugou;
+            LyricOffsetMs = defaults.LyricOffsetMs;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

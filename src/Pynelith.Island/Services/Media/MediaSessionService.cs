@@ -448,8 +448,10 @@ namespace Pynelith.Island.Services.Media
                 return;
             }
 
-            // 播放器在推进时以它为准（比推算更准）；回退/拖动则要求偏差足够大才采用
-            if (advanced || (smtcPosition - Position).Duration() > TimelineTolerance)
+            // 只在偏差明显时校正：播放器上报的时间轴常滞后 0.3~1 秒且抖动，
+            // 无条件跟随会把推算位置来回拉扯，表现为「正在唱第 2 句却显示第 1 句」。
+            // 本机推算基于单调时钟，短周期内更准；换歌/拖动进度这类大偏差才采用播放器值。
+            if ((smtcPosition - Position).Duration() > TimelineTolerance)
             {
                 _positionBase = smtcPosition;
                 _positionStampUtc = DateTime.UtcNow;

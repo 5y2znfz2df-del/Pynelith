@@ -148,10 +148,9 @@ namespace Pynelith.Island.Views
 
             _lyricTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
-                // 50ms 采样：配合 110ms 提前量（切行动画时长的一半），
-                // 歌词显示与真实播放点的误差稳定控制在 ±50ms 以内。
+                // 30ms 采样：切行延迟不超过一帧多一点，肉眼与歌词时间戳一致。
                 // 优先级用 Normal：Render 优先级会被逐帧动画长期抢占，导致歌词长时间不更新。
-                Interval = TimeSpan.FromMilliseconds(50),
+                Interval = TimeSpan.FromMilliseconds(30),
             };
             _lyricTimer.Tick += (_, _) => Guarded(() =>
             {
@@ -834,7 +833,9 @@ namespace Pynelith.Island.Views
 
             _lastLyricPosition = position;
 
-            int index = doc.LineAt(position + TimeSpan.FromMilliseconds(110));
+            // 严格按时间戳切换（不再提前）：提前量会让短间隔的句子"抢跑"到下一句。
+            // 用户可用 LyricOffsetMs 微调整首歌词的整体偏移（正值 = 歌词提前显示）。
+            int index = doc.LineAt(position + TimeSpan.FromMilliseconds(Config.LyricOffsetMs));
             if (index == _lyricIndex)
             {
                 return;
