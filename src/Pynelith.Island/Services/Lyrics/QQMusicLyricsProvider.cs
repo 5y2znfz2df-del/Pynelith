@@ -42,12 +42,14 @@ namespace Pynelith.Island.Services.Lyrics
                 {
                     string name = song.TryGetProperty("name", out JsonElement nameEl) ? nameEl.GetString() ?? "" : "";
                     string singer = song.TryGetProperty("singer", out JsonElement singerEl) ? singerEl.GetString() ?? "" : "";
-                    double score = LyricsMatch.Score(name, singer, title, artist);
-                    if (score < 2)
+
+                    // 搜索结果不含时长，按标题 + 歌手做硬性校验
+                    if (!LyricsMatch.IsTrustworthy(name, singer, TimeSpan.Zero, title, artist, duration))
                     {
                         continue;
                     }
 
+                    double score = LyricsMatch.Score(name, singer, title, artist);
                     if (score > bestScore)
                     {
                         bestScore = score;

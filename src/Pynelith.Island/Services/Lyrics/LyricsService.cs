@@ -64,19 +64,15 @@ namespace Pynelith.Island.Services.Lyrics
             }
 
             LrcDocument fromDisk = TryLoadFromDisk(key);
-            if (!fromDisk.IsEmpty)
+            if (!fromDisk.IsEmpty && FitsDuration(fromDisk, duration))
             {
                 Remember(key, fromDisk);
                 return fromDisk;
             }
 
-            // 同一首歌在不同播放器上报的歌手名可能不同，按标题回退命中已有缓存
-            LrcDocument byTitle = TryFindByTitle(title);
-            if (!byTitle.IsEmpty)
-            {
-                Remember(key, byTitle);
-                return byTitle;
-            }
+            // 注意：这里不再做"按标题模糊命中缓存"的回退。
+            // 之前只要缓存文件名包含标题就返回，经常把同名不同版本 / 同名不同歌手的歌词
+            // 套到当前曲目上，表现为"突然冒出来的 LRC 对不上"。
 
             foreach (ILyricsProvider provider in EnabledProviders())
             {
@@ -86,8 +82,9 @@ namespace Pynelith.Island.Services.Lyrics
                 {
                     string? lrc = await provider.FetchLrcAsync(title, artist, duration, ct);
                     LrcDocument doc = LrcDocument.Parse(lrc);
-                    if (doc.IsEmpty)
+                    if (doc.IsEmpty || !FitsDuration(doc, duration))
                     {
+                        // 时间轴比歌曲还长出一大截：多半是抓到了另一版本/另一首歌，丢弃
                         continue;
                     }
 
@@ -178,41 +175,19 @@ namespace Pynelith.Island.Services.Lyrics
             }
         }
 
-        /// <summary>按标题在缓存目录里模糊回退（忽略歌手名差异）。</summary>
-        private static LrcDocument TryFindByTitle(string title)
+        /// <summary>
+        /// 歌词最后一行时间不应明显超过歌曲时长（允许 20 秒片尾余量）。
+        /// 用来识别"同名但不同版本/不同歌"的错误缓存，避免整首歌词错位。
+        /// </summary>
+        private static bool FitsDuration(LrcDocument doc, TimeSpan duration)
         {
-            try
+            if (doc.IsEmpty || duration <= TimeSpan.Zero)
             {
-                if (!Directory.Exists(LyricsDirectory))
-                {
-                    return LrcDocument.Empty;
-                }
-
-                string target = LyricsMatch.Normalize(title);
-                if (target.Length < 3)
-                {
-                    return LrcDocument.Empty;
-                }
-
-                foreach (string file in Directory.EnumerateFiles(LyricsDirectory, "*.lrc"))
-                {
-                    string name = LyricsMatch.Normalize(Path.GetFileNameWithoutExtension(file));
-                    if (name.Contains(target))
-                    {
-                        LrcDocument doc = LrcDocument.Parse(File.ReadAllText(file));
-                        if (!doc.IsEmpty)
-                        {
-                            return doc;
-                        }
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                // 回退失败时交给在线歌词源。
+                return true;
             }
 
-            return LrcDocument.Empty;
+            TimeSpan last = doc.Lines[doc.Lines.Count - 1].Time;
+            return last <= duration + TimeSpan.FromSeconds(20);
         }
 
         private static void SaveToDisk(string key, string lrcText)

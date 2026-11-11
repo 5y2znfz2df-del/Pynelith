@@ -22,6 +22,7 @@ namespace Pynelith.Island.Services
         private readonly HashSet<uint> _known = new HashSet<uint>();
         private bool _takeover;
         private bool _polling;
+        private bool _primed;
         private bool _disposed;
 
         private SystemNotificationBridge(UserNotificationListener listener, bool takeover)
@@ -105,10 +106,20 @@ namespace Pynelith.Island.Services
             IReadOnlyList<UserNotification> list =
                 await _listener.GetNotificationsAsync(NotificationKinds.Toast);
 
+            // 首次轮询只建立基线：把系统里已有的历史通知记下但不展示，
+            // 否则每次启动都会把旧消息当成新消息刷一遍。
+            bool firstPoll = !_primed;
+
             var seen = new HashSet<uint>();
             foreach (UserNotification notification in list)
             {
                 seen.Add(notification.Id);
+
+                if (firstPoll)
+                {
+                    _known.Add(notification.Id);
+                    continue;
+                }
 
                 if (!_known.Add(notification.Id))
                 {
@@ -135,6 +146,7 @@ namespace Pynelith.Island.Services
 
             // 已被系统清除的通知允许再次出现
             _known.IntersectWith(seen);
+            _primed = true;
         }
 
         private static string ResolveAppName(UserNotification notification)

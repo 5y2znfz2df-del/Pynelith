@@ -1,16 +1,28 @@
 <Window x:Class="Pynelith.Island.Views.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Pynelith 设置"
-        Width="800" Height="560"
-        MinWidth="680" MinHeight="440"
+        Width="800" Height="604"
+        MinWidth="680" MinHeight="480"
+        WindowStyle="None"
+        ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         Topmost="True"
         Background="#1C1C1E"
         Foreground="#FFFFFFFF"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
-        FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI">
+        FontFamily="pack://application:,,,/Pynelith.Island;component/Fonts/#PingFang SC">
+
+    <!-- macOS 风格无边框窗口：去掉系统标题栏，保留 DWM 阴影与可拖拽缩放边框 -->
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="12"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False"/>
+    </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
         <SolidColorBrush x:Key="SideBrush" Color="#232326"/>
@@ -45,6 +57,41 @@
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Track" Property="Background" Value="{StaticResource AccentBrush}"/>
                                 <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- macOS 交通灯按钮：红=关闭 / 黄=最小化 / 绿=放大 -->
+        <Style x:Key="TrafficLightButton" TargetType="Button">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="16"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid Background="Transparent">
+                            <Ellipse x:Name="Dot" Width="12" Height="12"
+                                     Fill="{TemplateBinding Background}"/>
+                            <TextBlock x:Name="Glyph"
+                                       Text="{TemplateBinding Content}"
+                                       FontSize="9"
+                                       FontWeight="Bold"
+                                       Foreground="#99000000"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Opacity="0"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Glyph" Property="Opacity" Value="1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Dot" Property="Opacity" Value="0.65"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -101,50 +148,97 @@
         </Style>
     </Window.Resources>
 
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="212"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
+    <!-- 圆角窗口外壳；Win11 下由 DWM 负责外阴影与圆角 -->
+    <Border x:Name="WindowFrame"
+            Background="#1C1C1E"
+            BorderBrush="#3A3A3D"
+            BorderThickness="1"
+            CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="44"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
 
-        <!-- 侧边栏 -->
-        <Border Grid.Column="0" Background="{StaticResource SideBrush}">
-            <DockPanel>
-                <Border DockPanel.Dock="Top" Margin="12,14,12,10"
-                        Background="#14FFFFFF" CornerRadius="8" Padding="8,5">
-                    <TextBlock Text="搜索" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+            <!-- macOS 顶部工具条：左侧交通灯，右侧页面标题；空白处可拖动窗口 -->
+            <Grid Grid.Row="0" Background="{StaticResource SideBrush}"
+                  MouseLeftButtonDown="OnTitleBarMouseDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="212"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" Margin="16,0,0,0"
+                            VerticalAlignment="Center">
+                    <Button x:Name="CloseLight"
+                            Style="{StaticResource TrafficLightButton}"
+                            Background="#FF5F57" Content="✕"
+                            ToolTip="关闭" AutomationProperties.Name="关闭"
+                            Click="OnCloseWindow"/>
+                    <Button x:Name="MinimizeLight"
+                            Style="{StaticResource TrafficLightButton}"
+                            Background="#FEBC2E" Content="−"
+                            ToolTip="缩小" AutomationProperties.Name="缩小"
+                            Click="OnMinimizeWindow"/>
+                    <Button x:Name="ZoomLight"
+                            Style="{StaticResource TrafficLightButton}"
+                            Background="#28C840" Content="⤢"
+                            ToolTip="放大" AutomationProperties.Name="放大"
+                            Click="OnZoomWindow"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal"
+                            Margin="26,0,26,0" VerticalAlignment="Center">
+                    <Border Width="46" Height="26" CornerRadius="13" Background="#2C2C2E">
+                        <TextBlock Text="‹  ›" FontSize="12"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock x:Name="PageTitle" Text="通用"
+                               FontSize="15" FontWeight="SemiBold"
+                               Margin="14,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Border Grid.ColumnSpan="2" Height="1"
+                        Background="{StaticResource DividerBrush}"
+                        VerticalAlignment="Bottom"/>
+            </Grid>
+
+            <!-- 主体：左侧分页栏 + 右侧内容 -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="212"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Background="{StaticResource SideBrush}">
+                    <DockPanel>
+                        <Border DockPanel.Dock="Top" Margin="12,10,12,10"
+                                Background="#14FFFFFF" CornerRadius="8" Padding="8,5">
+                            <TextBlock Text="搜索" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+                        </Border>
+
+                        <StackPanel x:Name="SideStack"/>
+                    </DockPanel>
                 </Border>
 
-                <StackPanel x:Name="SideStack"/>
-            </DockPanel>
-        </Border>
+                <DockPanel Grid.Column="1">
+                    <TextBlock DockPanel.Dock="Bottom"
+                               x:Name="ResetLink"
+                               Text="恢复默认设置"
+                               Foreground="#FF453A"
+                               FontSize="12.5"
+                               Cursor="Hand"
+                               HorizontalAlignment="Center"
+                               Margin="0,10,0,18"
+                               MouseLeftButtonUp="OnReset"/>
 
-        <!-- 内容区 -->
-        <DockPanel Grid.Column="1">
-            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="26,18,26,6">
-                <Border Width="46" Height="26" CornerRadius="13" Background="#2C2C2E">
-                    <TextBlock Text="‹  ›" FontSize="12" Foreground="{StaticResource TextSecondary}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <TextBlock x:Name="PageTitle" Text="通用"
-                           FontSize="15" FontWeight="SemiBold"
-                           Margin="14,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-
-            <TextBlock DockPanel.Dock="Bottom"
-                       x:Name="ResetLink"
-                       Text="恢复默认设置"
-                       Foreground="#FF453A"
-                       FontSize="12.5"
-                       Cursor="Hand"
-                       HorizontalAlignment="Center"
-                       Margin="0,10,0,18"
-                       MouseLeftButtonUp="OnReset"/>
-
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          Padding="26,10,26,0">
-                <Grid x:Name="PageHost"/>
-            </ScrollViewer>
-        </DockPanel>
-    </Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Padding="26,10,26,0">
+                        <Grid x:Name="PageHost"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </Grid>
+        </Grid>
+    </Border>
 </Window>

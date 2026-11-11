@@ -30,7 +30,6 @@ namespace Pynelith.Island.Services.Lyrics
             string singerName = string.Empty;
             int durationSeconds = 0;
             double bestScore = 0;
-            double bestProximity = 0;
 
             using (JsonDocument doc = JsonDocument.Parse(searchJson))
             {
@@ -45,21 +44,23 @@ namespace Pynelith.Island.Services.Lyrics
                 {
                     string name = song.TryGetProperty("songname", out JsonElement nameEl) ? nameEl.GetString() ?? "" : "";
                     string singer = song.TryGetProperty("singername", out JsonElement singerEl) ? singerEl.GetString() ?? "" : "";
-                    double score = LyricsMatch.Score(name, singer, title, artist);
-                    if (score < 2)
-                    {
-                        continue;
-                    }
 
                     int seconds = song.TryGetProperty("duration", out JsonElement durEl) && durEl.ValueKind == JsonValueKind.Number
                         ? durEl.GetInt32()
                         : 0;
-                    double proximity = LyricsMatch.DurationProximity(TimeSpan.FromSeconds(seconds), duration);
+                    TimeSpan candidateDuration = TimeSpan.FromSeconds(seconds);
 
-                    if (score > bestScore || (Math.Abs(score - bestScore) < 0.01 && proximity > bestProximity))
+                    if (!LyricsMatch.IsTrustworthy(name, singer, candidateDuration, title, artist, duration))
+                    {
+                        continue;
+                    }
+
+                    double score = LyricsMatch.Score(name, singer, title, artist)
+                        + LyricsMatch.DurationProximity(candidateDuration, duration) * 0.5;
+
+                    if (score > bestScore)
                     {
                         bestScore = score;
-                        bestProximity = proximity;
                         hash = song.TryGetProperty("hash", out JsonElement hashEl) ? hashEl.GetString() ?? "" : "";
                         songName = name;
                         singerName = singer;

@@ -12,22 +12,28 @@ namespace Pynelith.Island.Configuration
     public sealed class IslandConfig : INotifyPropertyChanged
     {
         private double _globalScale = 1.0;
-        private double _collapsedWidth = 124;
-        private double _collapsedHeight = 24;
+        private double _collapsedWidth = 180;
+        private double _collapsedHeight = 26;
         private double _expandedWidth = 200;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
         private double _cornerRadius = 26;
         private int _animationDurationMs = 280;
-        private int _notificationDurationMs = 4000;
-        private List<string> _notificationBlacklist = new List<string> { "QQ", "企业微信" };
+        private int _notificationDurationMs = 5000;
+        // 保留字段仅为兼容旧配置文件；消息展示不再做任何黑白名单过滤。
+        private List<string> _notificationBlacklist = new List<string>();
         private bool _lyricsEnabled = true;
         private bool _takeoverNotifications = true;
         private bool _lyricsSourceNetease = true;
         private bool _lyricsSourceQQ = true;
         private bool _lyricsSourceKugou = true;
         private int _lyricOffsetMs;
+        private string _theme = ThemeStyles.LiquidGlass;
+        private bool _showClock = true;
+        private bool _showIdleHint = true;
+        private bool _showSystemMetrics = true;
+        private bool _screenshotCompatible;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -156,6 +162,47 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _lyricOffsetMs, Math.Clamp(value, -2000, 2000));
         }
 
+        /// <summary>
+        /// 界面主题：<see cref="ThemeStyles.LiquidGlass"/>（真液态玻璃）/
+        /// <see cref="ThemeStyles.PureBlack"/>（纯黑）/ <see cref="ThemeStyles.Frosted"/>（磨砂）。
+        /// </summary>
+        public string Theme
+        {
+            get => _theme;
+            set => Set(ref _theme, ThemeStyles.Normalize(value));
+        }
+
+        /// <summary>空闲态是否显示时间。</summary>
+        public bool ShowClock
+        {
+            get => _showClock;
+            set => Set(ref _showClock, value);
+        }
+
+        /// <summary>空闲态是否显示"待机 / N 条新通知"文字。</summary>
+        public bool ShowIdleHint
+        {
+            get => _showIdleHint;
+            set => Set(ref _showIdleHint, value);
+        }
+
+        /// <summary>空闲态是否显示 CPU / 内存实时占用。</summary>
+        public bool ShowSystemMetrics
+        {
+            get => _showSystemMetrics;
+            set => Set(ref _showSystemMetrics, value);
+        }
+
+        /// <summary>
+        /// 兼容模式：关闭实时玻璃层，改用静态磨砂底。
+        /// 液态玻璃由 DWM 合成，截图/录屏工具通常抓不到；开启后岛在截图与录屏中可见。
+        /// </summary>
+        public bool ScreenshotCompatible
+        {
+            get => _screenshotCompatible;
+            set => Set(ref _screenshotCompatible, value);
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -178,6 +225,11 @@ namespace Pynelith.Island.Configuration
             LyricsSourceQQ = defaults.LyricsSourceQQ;
             LyricsSourceKugou = defaults.LyricsSourceKugou;
             LyricOffsetMs = defaults.LyricOffsetMs;
+            Theme = defaults.Theme;
+            ShowClock = defaults.ShowClock;
+            ShowIdleHint = defaults.ShowIdleHint;
+            ShowSystemMetrics = defaults.ShowSystemMetrics;
+            ScreenshotCompatible = defaults.ScreenshotCompatible;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -189,6 +241,55 @@ namespace Pynelith.Island.Configuration
 
             field = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+
+    /// <summary>界面主题标识与显示名（配置里存字符串，保证旧配置/手改文件都能安全回退）。</summary>
+    public static class ThemeStyles
+    {
+        /// <summary>真液态玻璃：抓屏折射 + 色散（默认）。</summary>
+        public const string LiquidGlass = "LiquidGlass";
+
+        /// <summary>纯黑：不透明黑底 + 细亮边，零抓屏开销。</summary>
+        public const string PureBlack = "PureBlack";
+
+        /// <summary>磨砂：半透明深灰底 + 柔和高光，不抓屏。</summary>
+        public const string Frosted = "Frosted";
+
+        /// <summary>可选主题（键 → 显示名）。</summary>
+        public static readonly (string Key, string Name)[] All =
+        {
+            (LiquidGlass, "液态玻璃"),
+            (PureBlack, "纯黑"),
+            (Frosted, "磨砂"),
+        };
+
+        /// <summary>把任意输入归一到已知主题，未知值回退到液态玻璃。</summary>
+        public static string Normalize(string? value)
+        {
+            foreach (var item in All)
+            {
+                if (string.Equals(item.Key, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    return item.Key;
+                }
+            }
+
+            return LiquidGlass;
+        }
+
+        public static string DisplayName(string value)
+        {
+            string key = Normalize(value);
+            foreach (var item in All)
+            {
+                if (item.Key == key)
+                {
+                    return item.Name;
+                }
+            }
+
+            return All[0].Name;
         }
     }
 }

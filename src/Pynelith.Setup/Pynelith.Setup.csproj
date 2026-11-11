@@ -2,30 +2,46 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <UseWPF>true</UseWPF>
+    <!-- 用 WinForms 而不是 WPF：安装器自身不带 WPF 原生库，框架依赖单文件可以压到 1MB 级 -->
+    <UseWindowsForms>true</UseWindowsForms>
     <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>Pynelith.Setup</RootNamespace>
     <AssemblyName>PynelithSetup</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\assets\icon\pynelith.ico</ApplicationIcon>
     <Description>Pynelith 安装程序：选择安装路径、释放程序文件、创建快捷方式并注册卸载信息</Description>
+    <!-- 框架依赖发布：安装包只带自身代码 + 压缩后的内嵌程序，体积控制在 10MB 以内。
+         目标机器需要预先安装 .NET 8 桌面运行时（微软官网可下载）。 -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
+    <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Resource Include="..\..\assets\icon\pynelith.ico" />
-  </ItemGroup>
+  <PropertyGroup>
+    <!-- 载荷：Pynelith.Island 的框架依赖单文件产物（构建安装包前需先发布该 exe） -->
+    <IslandPayload>..\Pynelith.Island\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\Pynelith.Island.exe</IslandPayload>
+    <!-- 用 BaseIntermediateOutputPath 而不是 IntermediateOutputPath：
+         后者在属性求值阶段还是空的，会把 6.5MB 的临时 zip 落到源码目录根下。 -->
+    <IslandPayloadZip>$(BaseIntermediateOutputPath)Pynelith.Island.payload.zip</IslandPayloadZip>
+  </PropertyGroup>
 
   <ItemGroup>
-    <!-- 载荷：Pynelith.Island 的自包含单文件产物（构建安装包前需先发布该 exe） -->
-    <EmbeddedResource Include="..\Pynelith.Island\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\Pynelith.Island.exe">
-      <LogicalName>Pynelith.Island.exe</LogicalName>
+    <EmbeddedResource Include="..\..\assets\icon\pynelith.ico">
+      <LogicalName>pynelith.ico</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
+  <!-- 构建时把 25MB 的程序 exe 压成约 6.5MB 的 zip 再嵌入，安装时解压写出 -->
+  <Target Name="PackIslandPayload" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(IslandPayload)')"
+           Text="缺少程序载荷：请先发布 Pynelith.Island（框架依赖、win-x64）。" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(IslandPayload)' -DestinationPath '$(IslandPayloadZip)' -Force&quot;" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(IslandPayloadZip)">
+        <LogicalName>Pynelith.Island.payload.zip</LogicalName>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
 
 </Project>

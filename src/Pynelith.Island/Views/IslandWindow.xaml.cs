@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -34,6 +37,8 @@ namespace Pynelith.Island.Views
         private const double MinResponse = 0.12;   // 弹簧响应下限（秒）
         private const double MaxFrameDelta = 0.05; // 单帧最大步长（秒），防止时间跳变导致的位置突跳
 
+        private static readonly CultureInfo ZhCulture = CultureInfo.GetCultureInfo("zh-CN");
+
         private static readonly IntPtr HwndTopmost = new IntPtr(-1);
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOMOVE = 0x0002;
@@ -46,12 +51,21 @@ namespace Pynelith.Island.Views
         private readonly ConfigService _service;
         private readonly MediaSessionService _media;
         private readonly LyricsService _lyrics;
-        private readonly LiquidGlassSurface _glass;
         private readonly MockFeed _feed;
+        private readonly SystemMetricsService _metrics;
         private readonly DispatcherTimer _clockTimer;
         private readonly DispatcherTimer _lyricTimer;
         private readonly DispatcherTimer _topmostTimer;
+        private readonly DispatcherTimer _springTimer;
         private readonly RectangleGeometry _capsuleClip = new RectangleGeometry();
+
+        // 玻璃层按主题动态安装/卸载：纯黑、磨砂主题下不运行抓屏，省下全部采样开销
+        private LiquidGlassSurface? _glass;
+        private string _appliedTheme = string.Empty;
+        private bool _appliedCompatibility;
+
+        // 空闲态内容实测宽度（时间 + 待机文字 + 监控），确保胶囊始终包得住内容
+        private double _idleMinWidth;
 
         // 弹簧状态：p 为媒体态进度 0..1（允许过冲）
         private double _p;
@@ -63,6 +77,7 @@ namespace Pynelith.Island.Views
         private bool _mediaMode;
         private bool _dragging;
         private bool _pressActive;
+        private bool _metricsRunning;
         private Point _pressPoint;
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
@@ -74,8 +89,32 @@ namespace Pynelith.Island.Views
         private double _d;
         private double _dv;
 
+        // 消息展示：_n 为消息面板展开度 0..1，独立的弹簧通道
+        private readonly Queue<(string App, string Body)> _messageQueue = new Queue<(string App, string Body)>();
+        private readonly DispatcherTimer _messageHoldTimer;
+        private bool _messageTargetOn;
+        private bool _messageShowing;
+        private double _n;
+        private double _nv;
+        private double _notifWidth = 300;
+        private double _notifHeight = 96;
+
         // 点击播放后短暂锁定图标，避免 SMTC 状态回报滞后把图标刷回旧值
         private DateTime _playGlyphLockUntil = DateTime.MinValue;
+
+        // 展开面板：进度拖拽 / 音量拖拽状态
+        private bool _seeking;
+        private bool _updatingSeek;
+        private bool _volumeDragging;
+        private bool _updatingVolume;
+        private int _detailTick;
+        private int _volumeTick;
+
+        // Apple Music 风格的强调色与次级白色
+        private static readonly Brush AccentPink =
+            new SolidColorBrush(Color.FromRgb(0xFF, 0x37, 0x5F));
+        private static readonly Brush DimWhite =
+            new SolidColorBrush(Color.FromArgb(0xA6, 0xFF, 0xFF, 0xFF));
 
         private IntPtr _hwnd;
         private bool _dockGuardActive;
@@ -91,6 +130,13 @@ namespace Pynelith.Island.Views
         private int _lyricSourceMask = -1;
 
         private IslandConfig Config => _service.Config;
+
+        /// <summary>
+        /// 生效动画时长：遵循系统「辅助功能 → 显示动画」设置。
+        /// 用户关闭系统动画后，形变与消息面板直接落位，不再做逐帧弹簧。
+        /// </summary>
+        private int EffectiveAnimationMs
+            => SystemParameters.ClientAreaAnimation ? Config.AnimationDurationMs : 0;
 
         /// <summary>定时器回调保护：单次歌词/时钟异常不应直接崩溃整个宿主。</summary>
         private static void Guarded(Action action)
@@ -115,27 +161,30 @@ namespace Pynelith.Island.Views
 
             CapsuleHost.Clip = _capsuleClip;
 
-            // ---- 玻璃：只调用渲染模块公开接口，装在形变胶囊上（60fps 采样匹配动画帧率） ----
-            _glass = LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
-            {
-                CornerRadius = Config.CornerRadius,
-                BezelWidth = 22,
-                Thickness = 28,
-                GlassIor = 1.42,
-                Dispersion = 0.05,
-                TintAmount = Config.GlassBlurStrength,
-                TintTop = Color.FromRgb(6, 8, 11),
-                TintBottom = Color.FromRgb(20, 24, 32),
-                CaptureMargin = 50,
-                LightFollowsCursor = true,
-                // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
-                // 24fps 采样肉眼无差别，抓屏面积也一并收窄，给形变动画腾出 CPU。
-                FramesPerSecond = 24,
-            });
+            // ---- 主题：液态玻璃才安装玻璃层；纯黑/磨砂用静态底色，零抓屏开销 ----
+            ApplyTheme();
 
-            // ---- 通知仅用于空闲态计数（接管系统通知时关闭模拟通知） ----
-            _feed = new MockFeed(Config, notificationsEnabled: !Config.TakeoverNotifications);
+            // ---- 系统监控：CPU / 内存采样（按配置决定是否启动） ----
+            _metrics = new SystemMetricsService();
+            _metrics.Updated += OnMetricsUpdated;
+
+            // 模拟通知完全关闭：岛内只展示真实系统通知，避免演示数据混入消息流
+            _feed = new MockFeed(Config, notificationsEnabled: false);
             SetupBridge();
+
+            _messageHoldTimer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                Interval = TimeSpan.FromMilliseconds(5000),
+            };
+            _messageHoldTimer.Tick += (_, _) => Guarded(OnMessageHoldElapsed);
+
+            // 弹簧驱动改用定时器：CompositionTarget.Rendering 只在有画面需要合成时触发，
+            // 纯黑 / 磨砂且内容全关时窗口完全静止，Rendering 不会来，动画会永远停在第一帧。
+            _springTimer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                Interval = TimeSpan.FromMilliseconds(8),
+            };
+            _springTimer.Tick += OnSpringTimerTick;
 
             _clockTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
@@ -150,14 +199,15 @@ namespace Pynelith.Island.Views
 
             _lyricTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
-                // 30ms 采样：切行延迟不超过一帧多一点，肉眼与歌词时间戳一致。
+                // 20ms 采样：切行延迟 ≤20ms，配合播放位置的 80ms 校正容差，整体误差稳定在 100ms 内。
                 // 优先级用 Normal：Render 优先级会被逐帧动画长期抢占，导致歌词长时间不更新。
-                Interval = TimeSpan.FromMilliseconds(30),
+                Interval = TimeSpan.FromMilliseconds(20),
             };
             _lyricTimer.Tick += (_, _) => Guarded(() =>
             {
                 SyncLyricPosition();
                 SyncPlaybackGlyph();
+                UpdateDetailProgress();
             });
 
             _topmostTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -165,6 +215,35 @@ namespace Pynelith.Island.Views
                 Interval = TimeSpan.FromMilliseconds(1200),
             };
             _topmostTimer.Tick += (_, _) => ReassertTopmost();
+
+            // 进度条：拖拽期间冻结跟随，松手后一次跳转
+            SeekSlider.PreviewMouseLeftButtonDown += (_, _) => _seeking = true;
+            SeekSlider.PreviewMouseLeftButtonUp += (_, _) =>
+            {
+                if (_seeking)
+                {
+                    _seeking = false;
+                    CommitSeek();
+                }
+            };
+            SeekSlider.AddHandler(Thumb.DragStartedEvent,
+                new DragStartedEventHandler((_, _) => _seeking = true));
+            SeekSlider.AddHandler(Thumb.DragCompletedEvent,
+                new DragCompletedEventHandler((_, _) =>
+                {
+                    _seeking = false;
+                    CommitSeek();
+                }));
+            SeekSlider.ValueChanged += OnSeekValueChanged;
+
+            VolumeSlider.ValueChanged += OnVolumeValueChanged;
+            VolumeSlider.AddHandler(Thumb.DragStartedEvent,
+                new DragStartedEventHandler((_, _) => _volumeDragging = true));
+            VolumeSlider.AddHandler(Thumb.DragCompletedEvent,
+                new DragCompletedEventHandler((_, _) => _volumeDragging = false));
+
+            // 键盘无障碍：面板展开后可用空格 / 方向键 / Esc 操作，无需精确点击小控件
+            PreviewKeyDown += OnIslandKeyDown;
 
             _service.Changed += OnConfigChanged;
             _feed.Notifications.CollectionChanged += (_, _) => UpdateTexts();
@@ -185,6 +264,12 @@ namespace Pynelith.Island.Views
             _clockTimer.Start();
             _lyricTimer.Start();
             _topmostTimer.Start();
+
+            _metricsRunning = Config.ShowSystemMetrics;
+            if (_metricsRunning)
+            {
+                _metrics.Start();
+            }
 
             // 启动即同步一次媒体状态（会话服务可能已先就绪）
             OnMediaStateChanged(this, EventArgs.Empty);
@@ -288,6 +373,14 @@ namespace Pynelith.Island.Views
                 SetupBridge();
             }
 
+            if (!string.Equals(_appliedTheme, Config.Theme, StringComparison.Ordinal)
+                || _appliedCompatibility != Config.ScreenshotCompatible)
+            {
+                ApplyTheme();
+            }
+
+            ApplyMetricsTimer();
+
             ApplyWindowSize();
             ApplyMorph(_p);
             UpdateTexts();
@@ -318,6 +411,154 @@ namespace Pynelith.Island.Views
             }
         }
 
+        #region 主题与系统监控
+
+        /// <summary>
+        /// 应用界面主题：液态玻璃安装抓屏玻璃层；纯黑 / 磨砂改用静态底色并卸载玻璃层。
+        /// 三套主题共用同一套排版与动画，切换只改变背景与开销，不影响胶囊尺寸。
+        /// </summary>
+        private void ApplyTheme()
+        {
+            _appliedTheme = Config.Theme;
+            _appliedCompatibility = Config.ScreenshotCompatible;
+
+            // 兼容模式：实时玻璃层由 DWM 合成，截图/录屏抓不到。
+            // 开启后退化为静态磨砂底，外观仍然接近玻璃，但能被截图与录屏正常捕获。
+            bool glassTheme = string.Equals(_appliedTheme, ThemeStyles.LiquidGlass, StringComparison.Ordinal)
+                && !_appliedCompatibility;
+
+            if (glassTheme)
+            {
+                ThemeBackdrop.Background = Brushes.Transparent;
+                ThemeBackdrop.BorderThickness = new Thickness(0);
+
+                if (_glass == null)
+                {
+                    _glass = InstallGlass();
+                }
+            }
+            else
+            {
+                if (_glass != null)
+                {
+                    _glass.Dispose();
+                    _glass = null;
+                }
+
+                if (string.Equals(_appliedTheme, ThemeStyles.PureBlack, StringComparison.Ordinal))
+                {
+                    // 纯黑：完全不透明，零抓屏开销，适合 OLED / 低配机器。
+                    // 顶部到中部做极轻微的亮度渐变，让胶囊的弧面在纯黑里也能看出体积。
+                    ThemeBackdrop.Background = new LinearGradientBrush(
+                        (Color)ColorConverter.ConvertFromString("#050506"),
+                        (Color)ColorConverter.ConvertFromString("#000000"),
+                        new Point(0, 0),
+                        new Point(0, 1));
+                    ThemeBackdrop.BorderBrush = new SolidColorBrush(Color.FromArgb(0x3D, 0xFF, 0xFF, 0xFF));
+                }
+                else
+                {
+                    // 磨砂（以及液态玻璃 + 兼容模式）：半透明深灰 + 柔和高光，不抓屏也能与桌面分层
+                    ThemeBackdrop.Background = new SolidColorBrush(Color.FromArgb(0xE6, 0x16, 0x18, 0x1D));
+                    ThemeBackdrop.BorderBrush = new SolidColorBrush(Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF));
+                }
+
+                ThemeBackdrop.BorderThickness = new Thickness(1);
+            }
+
+            // 玻璃层重建后强制下一帧把形状参数推过去
+            _lastGlassWidth = -1;
+            _lastGlassHeight = -1;
+            _glassFrameSkip = 0;
+            ApplyMorph(_p);
+        }
+
+        private LiquidGlassSurface InstallGlass()
+        {
+            return LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
+            {
+                CornerRadius = Config.CornerRadius,
+                BezelWidth = 22,
+                Thickness = 28,
+                GlassIor = 1.42,
+                Dispersion = 0.05,
+                TintAmount = Config.GlassBlurStrength,
+                TintTop = Color.FromRgb(6, 8, 11),
+                TintBottom = Color.FromRgb(20, 24, 32),
+                CaptureMargin = 50,
+                LightFollowsCursor = true,
+                // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
+                // 24fps 采样肉眼无差别，抓屏面积也一并收窄，给形变动画腾出 CPU。
+                FramesPerSecond = 24,
+            });
+        }
+
+        /// <summary>按配置启停监控采样：关闭后不再有任何定时读取，主线程零负担。</summary>
+        private void ApplyMetricsTimer()
+        {
+            if (Config.ShowSystemMetrics == _metricsRunning)
+            {
+                return;
+            }
+
+            _metricsRunning = Config.ShowSystemMetrics;
+
+            if (_metricsRunning)
+            {
+                _metrics.Start();
+            }
+            else
+            {
+                _metrics.Stop();
+                IdleMetrics.Text = string.Empty;
+            }
+
+            UpdateTexts();
+        }
+
+        private void OnMetricsUpdated(object? sender, EventArgs e) => UpdateMetricsText();
+
+        /**
+         * 监控文本固定宽度（等宽字体），数值变化不会改变胶囊宽度；
+         * 任一指标超过 85% 时转为警示色，便于一眼看出高负载。
+         */
+        private void UpdateMetricsText()
+        {
+            if (!Config.ShowSystemMetrics)
+            {
+                IdleMetrics.Text = string.Empty;
+                IdleDetailMetrics.Text = string.Empty;
+                return;
+            }
+
+            if (!_metrics.IsAvailable)
+            {
+                IdleMetrics.Text = "CPU --%  RAM --%";
+                IdleDetailMetrics.Text = "CPU --% · RAM --%";
+                return;
+            }
+
+            IdleMetrics.Text = string.Format(
+                "CPU {0,3:0}%  RAM {1,2:0}%",
+                _metrics.CpuPercent,
+                _metrics.MemoryPercent);
+
+            IdleDetailMetrics.Text = string.Format(
+                "CPU {0:0}% · RAM {1:0}%",
+                _metrics.CpuPercent,
+                _metrics.MemoryPercent);
+
+            double peak = Math.Max(_metrics.CpuPercent, _metrics.MemoryPercent);
+            Brush brush = peak >= 85
+                ? new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71))
+                : (Brush)FindResource("TextSecondary");
+
+            IdleMetrics.Foreground = brush;
+            IdleDetailMetrics.Foreground = brush;
+        }
+
+        #endregion
+
         #region 系统通知接管
 
         private SystemNotificationBridge? _bridge;
@@ -331,16 +572,11 @@ namespace Pynelith.Island.Views
             _bridge?.Dispose();
             _bridge = null;
 
-            if (!_takeoverActive)
-            {
-                _feed.SetNotificationsEnabled(true);
-                return;
-            }
-
-            _bridge = SystemNotificationBridge.TryCreate(true);
+            // 是否"接管"只决定要不要撤下系统原生 Toast；
+            // 消息本身始终监听，用于自动展开岛内展示。
+            _bridge = SystemNotificationBridge.TryCreate(_takeoverActive);
             if (_bridge == null)
             {
-                _feed.SetNotificationsEnabled(true);
                 return;
             }
 
@@ -359,46 +595,216 @@ namespace Pynelith.Island.Views
 
             if (allowed)
             {
-                _feed.SetNotificationsEnabled(false);
                 bridge.Start();
             }
-            else
-            {
-                // 未授权：先用模拟通知保证界面可用
-                _feed.SetNotificationsEnabled(true);
-            }
+            // 未授权时保持安静：不再生成模拟消息，设置页里有授权引导链接。
         }
 
         private void OnSystemNotification(string app, string body)
         {
-            if (_feed.IsBlacklisted(app))
+            // 不做黑白名单过滤：所有系统通知一律进入岛内展示队列
+            EnqueueMessage(app, body);
+        }
+
+        #region 消息展示
+
+        /// <summary>
+        /// 收到一条消息：直接入队（不做任何黑白名单过滤）。
+        /// 当前没有消息时立即展开；否则排队，等当前消息停留结束后接着展示。
+        /// </summary>
+        private void EnqueueMessage(string app, string body)
+        {
+            string text = NormalizeMessage(body);
+            if (text.Length == 0)
             {
                 return;
             }
 
-            _feed.Notifications.Insert(0, new Models.NotificationItem
+            string name = string.IsNullOrWhiteSpace(app) ? "通知" : app.Trim();
+            _messageQueue.Enqueue((name, text));
+            while (_messageQueue.Count > 20)
             {
-                AppName = app,
-                Title = body,
-                Accent = AccentFor(app),
-                CreatedAt = DateTime.Now,
-            });
-
-            while (_feed.Notifications.Count > 3)
-            {
-                _feed.Notifications.RemoveAt(_feed.Notifications.Count - 1);
+                _messageQueue.Dequeue();
             }
 
-            UpdateTexts();
+            if (!_messageShowing || !_messageTargetOn)
+            {
+                StartNextMessage();
+            }
         }
 
-        private static readonly string[] AccentPalette = { "#7BE0FF", "#4ADE80", "#60A5FA", "#FBBF24", "#F87171", "#C084FC" };
-
-        private static Brush AccentFor(string app)
+        /// <summary>取出队列中的下一条消息，展开面板并开始停留计时。</summary>
+        private void StartNextMessage()
         {
-            int index = Math.Abs(app.GetHashCode(StringComparison.Ordinal)) % AccentPalette.Length;
-            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(AccentPalette[index]));
+            if (_messageQueue.Count == 0)
+            {
+                return;
+            }
+
+            var (app, body) = _messageQueue.Dequeue();
+
+            _messageShowing = true;
+            _detail = false; // 消息结束后回到默认紧凑形态
+
+            MessageApp.Text = app;
+            MessageBody.Text = body;
+            ApplyMessageLayout();
+
+            ApplyWindowSize();
+            if (!_dragging)
+            {
+                Reposition();
+            }
+
+            // 停留时长沿用「消息停留」配置，默认约 5 秒
+            _messageHoldTimer.Stop();
+            _messageHoldTimer.Interval = TimeSpan.FromMilliseconds(
+                Math.Clamp(Config.NotificationDurationMs, 1500, 15000));
+            _messageHoldTimer.Start();
+
+            AnimateMessage(true);
         }
+
+        /// <summary>停留结束：队列里还有消息就继续展示，否则平滑收回。</summary>
+        private void OnMessageHoldElapsed()
+        {
+            _messageHoldTimer.Stop();
+
+            if (_messageQueue.Count > 0)
+            {
+                StartNextMessage();
+                return;
+            }
+
+            AnimateMessage(false);
+        }
+
+        /// <summary>点击消息或需要强制收起时：清空排队消息并平滑收回。</summary>
+        private void DismissMessages()
+        {
+            _messageQueue.Clear();
+            _messageHoldTimer.Stop();
+            AnimateMessage(false);
+        }
+
+        /// <summary>展开 / 收回消息面板：按配置动画时长走弹簧，0 时长时立即落位。</summary>
+        private void AnimateMessage(bool expanded)
+        {
+            _messageTargetOn = expanded;
+
+            if (EffectiveAnimationMs <= 0)
+            {
+                _n = expanded ? 1 : 0;
+                _nv = 0;
+                StopSpring();
+                ApplyMorph(_p);
+
+                if (!expanded)
+                {
+                    FinishMessageCollapse();
+                }
+
+                return;
+            }
+
+            EnsureSpring();
+        }
+
+        /// <summary>消息完全收回后恢复窗口尺寸并清空文本，避免残留内容占内存。</summary>
+        private void FinishMessageCollapse()
+        {
+            _messageShowing = false;
+            _detail = false;
+            _d = 0;
+            _dv = 0;
+
+            MessageApp.Text = string.Empty;
+            MessageBody.Text = string.Empty;
+
+            ApplyWindowSize();
+            ApplyMorph(_p);
+
+            if (!_dragging)
+            {
+                Reposition();
+            }
+        }
+
+        /// <summary>
+        /// 按文本实测消息面板尺寸：宽度取屏宽的合理上限，正文自动换行；
+        /// 高度按文字行数增长，超长文本逐级缩小字号直到完整放下（不截断）。
+        /// </summary>
+        private void ApplyMessageLayout()
+        {
+            double scale = Math.Max(0.01, Config.GlobalScale);
+            Rect work = SystemParameters.WorkArea;
+
+            double padding = 16;
+            double maxPreWidth = Math.Max(200, work.Width / scale - 48);
+            double preWidth = Math.Min(420, maxPreWidth);
+            double bodyWidth = Math.Max(140, preWidth - padding * 2);
+
+            // 允许消息面板占据接近整屏的高度，配合字号收缩，常见长消息都能完整放下
+            double maxPreHeight = Math.Max(160, Math.Min(520, work.Height / scale - 60));
+            double chrome = 18 + 4 + 24; // 应用名行高 + 间距 + 上下内边距
+
+            double fontSize = 12.5;
+            double bodyHeight;
+
+            while (true)
+            {
+                MessageBody.FontSize = fontSize;
+                MessageBody.Width = bodyWidth;
+                MessageBody.Measure(new Size(bodyWidth, double.PositiveInfinity));
+                bodyHeight = MessageBody.DesiredSize.Height;
+
+                if (chrome + bodyHeight <= maxPreHeight || fontSize <= 8.0)
+                {
+                    break;
+                }
+
+                fontSize -= 0.5;
+            }
+
+            // 极端超长消息的兜底：限制可视高度，超出部分通过滚动条查看，绝不让文字溢出胶囊
+            double bodyArea = Math.Max(40, maxPreHeight - chrome);
+            double visibleHeight = Math.Min(bodyHeight, bodyArea);
+            MessageScroll.Height = visibleHeight;
+
+            double preHeight = Math.Clamp(chrome + visibleHeight, 64, maxPreHeight);
+            NotificationLayer.Width = preWidth;
+            NotificationLayer.Height = preHeight;
+
+            _notifWidth = preWidth * scale;
+            _notifHeight = preHeight * scale;
+        }
+
+        /// <summary>去掉控制字符（保留换行/制表），避免乱码影响排版。</summary>
+        private static string NormalizeMessage(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(body.Length);
+            foreach (char c in body)
+            {
+                if (c == '\r')
+                {
+                    continue;
+                }
+
+                if (c == '\n' || c == '\t' || !char.IsControl(c))
+                {
+                    builder.Append(c);
+                }
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        #endregion
 
         #endregion
 
@@ -408,8 +814,18 @@ namespace Pynelith.Island.Views
             double scale = Config.GlobalScale;
             var m = Metrics();
 
-            Width = Math.Max(m.DetailW, m.MediaW);
-            Height = Math.Max(m.DetailH, m.IdleH);
+            double windowWidth = Math.Max(m.DetailW, m.MediaW);
+            double windowHeight = Math.Max(m.DetailH, m.IdleH);
+
+            // 消息面板可能比常规形态更大：窗口需要临时让出足够空间，避免文本被裁切
+            if (_messageShowing)
+            {
+                windowWidth = Math.Max(windowWidth, _notifWidth);
+                windowHeight = Math.Max(windowHeight, _notifHeight);
+            }
+
+            Width = windowWidth;
+            Height = windowHeight;
 
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
@@ -433,13 +849,18 @@ namespace Pynelith.Island.Views
             double idleHeight = Config.CollapsedHeight * scale;
             double mediaWidth = Config.ExpandedWidth * scale;
 
+            // 空闲态宽度取「配置值」与「内容实测宽度」的较大者：
+            // 用户关掉监控/时间后胶囊会自然收窄，新增内容时又不会被裁切。
+            double idleWidth = Math.Max(Config.CollapsedWidth, _idleMinWidth) * scale;
+
             return (
-                Config.CollapsedWidth * scale,
+                idleWidth,
                 idleHeight,
                 mediaWidth,
                 idleHeight,
-                mediaWidth + 60 * scale,
-                Math.Max(60 * scale, idleHeight));
+                // 展开态是仿 iOS 灵动岛的播放面板：320×146（随全局缩放）
+                Math.Max(320 * scale, mediaWidth),
+                Math.Max(146 * scale, idleHeight));
         }
 
         /// <summary>
@@ -462,39 +883,91 @@ namespace Pynelith.Island.Views
             }
 
             double pc = Math.Clamp(p, 0, 1);
-            double pd = Math.Clamp(_d, 0, 1) * pc; // 展开只在媒体态生效
+            double d = Math.Clamp(_d, 0, 1);
+
+            // 展开在两种形态下都有效：待机展开（大时钟）与媒体展开（曲目详情）
+            double mediaDetail = d * pc;
+            double idleDetail = d * (1 - pc);
+            double scale = Math.Max(0.01, Config.GlobalScale);
             var m = Metrics();
 
-            double width = m.IdleW + (m.MediaW - m.IdleW) * pc + (m.DetailW - m.MediaW) * pd;
-            double height = m.IdleH + (m.MediaH - m.IdleH) * pc + (m.DetailH - m.MediaH) * pd;
+            double idleDetailWidth = Math.Max(m.IdleW, 224 * scale);
+            double idleDetailHeight = Math.Max(60 * scale, m.IdleH);
+            double width = m.IdleW
+                + (m.MediaW - m.IdleW) * pc
+                + (m.DetailW - m.MediaW) * mediaDetail
+                + (idleDetailWidth - m.IdleW) * idleDetail;
+            double height = m.IdleH
+                + (idleDetailHeight - m.IdleH) * idleDetail
+                + (m.DetailH - m.IdleH) * mediaDetail;
+
+            // 消息层：独立弹簧把胶囊从当前形态平滑拉到消息面板尺寸（再平滑收回）
+            double n = Math.Clamp(_n, 0, 1);
+            if (n > 0.0001)
+            {
+                width += (_notifWidth - width) * n;
+                height += (_notifHeight - height) * n;
+            }
 
             CapsuleHost.Width = width;
             CapsuleHost.Height = height;
 
-            double scale = Math.Max(0.01, Config.GlobalScale);
             ContentHost.Width = width / scale;
             ContentHost.Height = height / scale;
 
-            double radius = Math.Min(Config.CornerRadius * scale, Math.Min(width, height) * 0.5);
+            // 小尺寸时按高度一半裁成标准胶囊；展开成播放面板后收敛到配置圆角，
+            // 避免 224 高的面板变成两端半圆的"巨型药丸"，更接近 macOS 面板。
+            double pillRadius = Math.Min(width, height) * 0.5;
+            double radius = Math.Min(Config.CornerRadius * scale, pillRadius);
             _capsuleClip.Rect = new Rect(0, 0, width, height);
             _capsuleClip.RadiusX = radius;
             _capsuleClip.RadiusY = radius;
 
-            // 三层交叉淡入：空闲 ⇄ 紧凑 ⇄ 展开
-            double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1);
-            double compactAlpha = Math.Clamp(pc * 2.2, 0, 1) * Math.Clamp(1 - pd * 1.8, 0, 1);
-            double detailAlpha = Math.Clamp((pd - 0.18) / 0.82, 0, 1);
+            // 纯黑 / 磨砂用真正的圆角 Border 绘制底色，描边会沿弧线走，
+            // 比"矩形填充 + 父级裁剪"边缘更干净、更接近灵动岛的胶囊感。
+            ThemeBackdrop.CornerRadius = new CornerRadius(radius);
+
+            // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
+            double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
+            double idleDetailAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp((d - 0.15) / 0.85, 0, 1);
+            double compactAlpha = Math.Clamp(pc * 2.2, 0, 1) * Math.Clamp(1 - mediaDetail * 1.8, 0, 1);
+            double detailAlpha = Math.Clamp((mediaDetail - 0.18) / 0.82, 0, 1);
+
+            // 消息层接管时，原有内容整体淡出，避免文字叠在一起
+            double notificationAlpha = Math.Clamp(n * 1.35, 0, 1);
+            double baseAlpha = 1 - notificationAlpha;
+
+            idleAlpha *= baseAlpha;
+            idleDetailAlpha *= baseAlpha;
+            compactAlpha *= baseAlpha;
+            detailAlpha *= baseAlpha;
+
+            NotificationLayer.Opacity = notificationAlpha;
+            // 消息展示期间接收点击：点一下即收起（不再"点了没反应"）
+            NotificationLayer.IsHitTestVisible = notificationAlpha > 0.5;
 
             IdleView.Opacity = idleAlpha;
             IdleView.IsHitTestVisible = idleAlpha > 0.5;
             IdleScale.ScaleX = 1 + 0.08 * pc;
             IdleScale.ScaleY = 1 + 0.08 * pc;
 
+            IdleDetailLayer.Opacity = idleDetailAlpha;
+            IdleDetailLayer.IsHitTestVisible = idleDetailAlpha > 0.5;
+
             CompactLayer.Opacity = compactAlpha;
             CompactLayer.IsHitTestVisible = compactAlpha > 0.5;
 
             DetailLayer.Opacity = detailAlpha;
             DetailLayer.IsHitTestVisible = detailAlpha > 0.5;
+
+            // 播放控件只在媒体紧凑态出现：待机时淡出且不参与命中测试，
+            // 这样它不会和时间/CPU/RAM 文字叠在一起，也不会吃掉点击。
+            // 展开成完整播放面板后同样必须淡出，否则紧凑态的⏮▶⏭会压在音量滑杆上。
+            double controlsAlpha = Math.Clamp(pc * 1.8 - 0.25, 0, 1)
+                * Math.Clamp(1 - mediaDetail * 1.6, 0, 1)
+                * baseAlpha;
+            PlaybackControls.Opacity = controlsAlpha;
+            PlaybackControls.IsHitTestVisible = controlsAlpha > 0.5;
 
             ApplyGlassShape(width, height);
         }
@@ -506,6 +979,12 @@ namespace Pynelith.Island.Views
         /// </summary>
         private void ApplyGlassShape(double width, double height)
         {
+            // 纯黑 / 磨砂主题没有玻璃层，形状只由 _capsuleClip 负责
+            if (_glass == null)
+            {
+                return;
+            }
+
             // 动画期间每 5 帧才真正刷新玻璃：一次刷新包含抓屏 + 像素处理 + 位图上传，
             // 是逐帧动画里最重的一步。降到约 12Hz 后，慢帧（>16.7ms）数量显著下降，
             // 而玻璃是背景模糊、形状差异在 2.5 DIP 内不可见，观感无损失。
@@ -546,7 +1025,7 @@ namespace Pynelith.Island.Views
         {
             _target = Math.Clamp(target, 0, 1);
 
-            if (Config.AnimationDurationMs <= 0 || Math.Abs(_p - _target) < 0.0005)
+            if (EffectiveAnimationMs <= 0 || Math.Abs(_p - _target) < 0.0005)
             {
                 _p = _target;
                 _v = 0;
@@ -570,7 +1049,15 @@ namespace Pynelith.Island.Views
 
             _detail = detail;
 
-            if (Config.AnimationDurationMs <= 0)
+            if (detail)
+            {
+                // 打开面板时立即同步一次进度、音量与播放模式
+                SyncPlaybackGlyph();
+                SyncVolumeFromSystem();
+                RefreshDetailProgress();
+            }
+
+            if (EffectiveAnimationMs <= 0)
             {
                 _d = detail ? 1 : 0;
                 _dv = 0;
@@ -588,7 +1075,7 @@ namespace Pynelith.Island.Views
             if (!_springRunning)
             {
                 _springRunning = true;
-                CompositionTarget.Rendering += OnSpringFrame;
+                _springTimer.Start();
             }
         }
 
@@ -600,7 +1087,7 @@ namespace Pynelith.Island.Views
             }
 
             _springRunning = false;
-            CompositionTarget.Rendering -= OnSpringFrame;
+            _springTimer.Stop();
 
             // 让动画结束后的下一次 ApplyMorph 一定把最终形状推给玻璃层
             _lastGlassWidth = -1;
@@ -608,7 +1095,7 @@ namespace Pynelith.Island.Views
             _glassFrameSkip = 0;
         }
 
-        private void OnSpringFrame(object? sender, EventArgs e)
+        private void OnSpringTimerTick(object? sender, EventArgs e)
         {
             long now = Stopwatch.GetTimestamp();
             double dt = (now - _lastFrameTicks) / (double)Stopwatch.Frequency;
@@ -622,7 +1109,7 @@ namespace Pynelith.Island.Views
             }
 
             // 响应时长由配置动画时长决定；阻尼比固定，保证手感一致
-            double response = Math.Max(MinResponse, Config.AnimationDurationMs / 1000.0 * 0.5);
+            double response = Math.Max(MinResponse, EffectiveAnimationMs / 1000.0 * 0.5);
             double omega = 2 * Math.PI / response;
             double k = omega * omega;
             double c = 2 * SpringZeta * omega;
@@ -635,6 +1122,7 @@ namespace Pynelith.Island.Views
             double h = dt / steps;
 
             double detailTarget = _detail ? 1 : 0;
+            double messageTarget = _messageTargetOn ? 1 : 0;
 
             for (int i = 0; i < steps; i++)
             {
@@ -645,22 +1133,37 @@ namespace Pynelith.Island.Views
                 double dAccel = -k * (_d - detailTarget) - c * _dv;
                 _dv += dAccel * h;
                 _d += _dv * h;
+
+                double nAccel = -k * (_n - messageTarget) - c * _nv;
+                _nv += nAccel * h;
+                _n += _nv * h;
             }
 
             bool mainSettled = Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015;
             bool detailSettled = Math.Abs(_d - detailTarget) < 0.0015 && Math.Abs(_dv) < 0.0015;
+            bool messageSettled = Math.Abs(_n - messageTarget) < 0.0015 && Math.Abs(_nv) < 0.0015;
 
             // 超时兜底：极端负载下也不允许动画无限挂起，否则 Rendering 会持续占满 UI 线程
             bool timedOut = Stopwatch.GetElapsedTime(_springStartTicks) > TimeSpan.FromSeconds(2);
 
-            if (mainSettled && detailSettled || timedOut)
+            if (mainSettled && detailSettled && messageSettled || timedOut)
             {
                 _p = _target;
                 _v = 0;
                 _d = detailTarget;
                 _dv = 0;
+                _n = messageTarget;
+                _nv = 0;
                 StopSpring();
                 ApplyMorph(_p);
+
+                // 只有确实处于消息展示状态时才做收尾；否则每次点击展开动画结算
+                // 都会被误判成"消息收起"，把 _detail 重置、胶囊瞬间缩回去。
+                if (!_messageTargetOn && _messageShowing)
+                {
+                    FinishMessageCollapse();
+                }
+
                 return;
             }
 
@@ -677,11 +1180,8 @@ namespace Pynelith.Island.Views
 
             _mediaMode = media;
 
-            if (!media)
-            {
-                _detail = false;
-            }
-
+            // 不在这里重置 _detail：用户点击展开后必须保持展开，
+            // 只有用户再次点击、或消息展示结束时才收起。
             AnimateMorphTo(media ? 1 : 0);
             UpdateTexts();
         }
@@ -760,9 +1260,24 @@ namespace Pynelith.Island.Views
             CompactCoverFallback.Visibility = fallbackVisibility;
             DetailCoverFallback.Visibility = fallbackVisibility;
 
-            TrackLabel.Text = string.IsNullOrWhiteSpace(_media.Artist)
-                ? _media.Title
-                : _media.Title + " · " + _media.Artist;
+            TrackLabel.Text = _media.Title;
+            ArtistLabel.Text = string.IsNullOrWhiteSpace(_media.Artist) ? "未知歌手" : _media.Artist;
+
+            double durationSeconds = Math.Max(0, _media.Duration.TotalSeconds);
+            _updatingSeek = true;
+            try
+            {
+                SeekSlider.Maximum = Math.Max(1, durationSeconds);
+                SeekSlider.IsEnabled = durationSeconds > 0;
+                if (durationSeconds <= 0)
+                {
+                    SeekSlider.Value = 0;
+                }
+            }
+            finally
+            {
+                _updatingSeek = false;
+            }
 
             bool media = _media.HasSession && !string.IsNullOrWhiteSpace(_media.Title);
             SetMediaMode(media);
@@ -771,22 +1286,65 @@ namespace Pynelith.Island.Views
         /// <summary>把播放/暂停图标同步为当前状态；点击后的短暂窗口内不覆盖乐观值。</summary>
         private void SyncPlaybackGlyph()
         {
-            if (DateTime.UtcNow < _playGlyphLockUntil)
+            if (DateTime.UtcNow >= _playGlyphLockUntil)
             {
-                return;
+                SetCompactPlayGlyph(_media.IsPlaying);
+                SetDetailPlayGlyph(_media.IsPlaying);
             }
 
-            string glyph = _media.IsPlaying ? "⏸" : "▶";
-            if (!Equals(PlayButton.Content, glyph))
-            {
-                PlayButton.Content = glyph;
-            }
+            SyncModeGlyphs();
+        }
+
+        /// <summary>紧凑态的播放/暂停：切换矢量图层，避免文字字形在不同 DPI 下被裁切。</summary>
+        private void SetCompactPlayGlyph(bool playing)
+        {
+            CompactPlayGlyph.Visibility = playing ? Visibility.Collapsed : Visibility.Visible;
+            CompactPauseGlyph.Visibility = playing ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>展开面板的播放/暂停：切换两个矢量图层的可见性（实心三角 / 双竖条）。</summary>
+        private void SetDetailPlayGlyph(bool playing)
+        {
+            DetailPlayGlyph.Visibility = playing ? Visibility.Collapsed : Visibility.Visible;
+            DetailPauseGlyph.Visibility = playing ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>随机 / 循环按钮的高亮状态（Apple Music 用粉色强调）。</summary>
+        private void SyncModeGlyphs()
+        {
+            ShuffleButton.Foreground = _media.IsShuffleActive ? AccentPink : DimWhite;
+
+            bool repeatOn = _media.RepeatMode != MediaRepeatMode.None;
+            RepeatButton.Foreground = repeatOn ? AccentPink : DimWhite;
+
+            // 单曲循环在环内显示 1，对应 SF Symbols 的 repeat.1
+            RepeatOneBadge.Visibility = _media.RepeatMode == MediaRepeatMode.One
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            // 律动条只在播放时保持全亮
+            DetailWaveform.Opacity = _media.IsPlaying ? 1 : 0.4;
         }
 
         private void OnTrackChanged()
         {
             _currentLrc = null;
             _lyricIndex = -2;
+            _seeking = false;
+            _detailTick = 0;
+
+            _updatingSeek = true;
+            try
+            {
+                SeekSlider.Value = 0;
+            }
+            finally
+            {
+                _updatingSeek = false;
+            }
+
+            ElapsedText.Text = "0:00";
+            RemainingText.Text = "–:–";
 
             if (string.IsNullOrWhiteSpace(_media.Title))
             {
@@ -818,7 +1376,11 @@ namespace Pynelith.Island.Views
             try
             {
                 LrcDocument doc = await _lyrics.GetLyricsAsync(title, artist, _media.Duration, ct);
-                if (ct.IsCancellationRequested)
+
+                // 双重校验：即使取消信号来得稍晚，曲目已经变了也不能把上一首的歌词套上来
+                if (ct.IsCancellationRequested
+                    || !string.Equals(_media.Title, title, StringComparison.Ordinal)
+                    || !string.Equals(_media.Artist, artist, StringComparison.Ordinal))
                 {
                     return;
                 }
@@ -860,7 +1422,7 @@ namespace Pynelith.Island.Views
         }
 
         /// <summary>
-        /// 按播放位置同步当前歌词行（50ms 采样 + 110ms 提前量，对应切行动画的一半时长）。
+        /// 按播放位置同步当前歌词行（20ms 采样、严格按时间戳切换，整体误差 &lt;100ms）。
         /// 位置发生跳变（切歌/拖动进度）时强制重算，避免沿用旧行号。
         /// </summary>
         private void SyncLyricPosition()
@@ -933,7 +1495,8 @@ namespace Pynelith.Island.Views
             TranslateTransform inTrans, TranslateTransform outTrans, string text)
         {
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            const double durationMs = 220;
+            // 系统关闭「显示动画」时不做歌词滚动，直接切换文本
+            double durationMs = SystemParameters.ClientAreaAnimation ? 220 : 0;
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -999,20 +1562,254 @@ namespace Pynelith.Island.Views
         private async void OnTogglePlay(object sender, RoutedEventArgs e)
         {
             bool willPlay = !_media.IsPlaying;
-            PlayButton.Content = willPlay ? "⏸" : "▶";
+            SetCompactPlayGlyph(willPlay);
+            SetDetailPlayGlyph(willPlay);
             _playGlyphLockUntil = DateTime.UtcNow.AddSeconds(1.5);
 
             await _media.TogglePlayPauseAsync();
 
             // 命令返回后立刻按最新状态收敛一次；仍与预期不符则等心跳兜底
-            string glyph = _media.IsPlaying ? "⏸" : "▶";
-            PlayButton.Content = glyph;
+            SetCompactPlayGlyph(_media.IsPlaying);
+            SetDetailPlayGlyph(_media.IsPlaying);
             _playGlyphLockUntil = DateTime.UtcNow.AddMilliseconds(400);
         }
 
         private void OnSkipPrevious(object sender, RoutedEventArgs e) => _ = _media.SkipPreviousAsync();
 
         private void OnSkipNext(object sender, RoutedEventArgs e) => _ = _media.SkipNextAsync();
+
+        private async void OnToggleShuffle(object sender, RoutedEventArgs e)
+        {
+            await _media.ToggleShuffleAsync();
+            SyncModeGlyphs();
+        }
+
+        private async void OnCycleRepeat(object sender, RoutedEventArgs e)
+        {
+            await _media.CycleRepeatAsync();
+            SyncModeGlyphs();
+        }
+
+        #endregion
+
+        #region 展开播放面板的进度与音量
+
+        /// <summary>进度条数值变化：拖拽中只更新时间文字，用户松手或键盘操作时才跳转。</summary>
+        private void OnSeekValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_updatingSeek)
+            {
+                return;
+            }
+
+            UpdateSeekLabels(TimeSpan.FromSeconds(Math.Max(0, e.NewValue)));
+            if (!_seeking)
+            {
+                CommitSeek();
+            }
+        }
+
+        private void CommitSeek()
+        {
+            if (_media.Duration <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            TimeSpan target = TimeSpan.FromSeconds(
+                Math.Clamp(SeekSlider.Value, 0, SeekSlider.Maximum));
+            _ = _media.SeekAsync(target);
+        }
+
+        /// <summary>
+        /// 键盘无障碍操作：面板展开后
+        /// 空格 = 播放/暂停，←/→ = 快退/快进 5 秒，↑/↓ = 音量 ±5%，Esc = 收起。
+        /// </summary>
+        private void OnIslandKeyDown(object sender, KeyEventArgs e)
+        {
+            if (!_detail || _messageShowing || !_mediaMode)
+            {
+                return;
+            }
+
+            switch (e.Key)
+            {
+                case Key.Space:
+                    OnTogglePlay(this, new RoutedEventArgs());
+                    break;
+                case Key.Left:
+                    NudgeSeek(-5);
+                    break;
+                case Key.Right:
+                    NudgeSeek(5);
+                    break;
+                case Key.Up:
+                    NudgeVolume(5);
+                    break;
+                case Key.Down:
+                    NudgeVolume(-5);
+                    break;
+                case Key.Escape:
+                    SetDetail(false);
+                    break;
+                default:
+                    return;
+            }
+
+            e.Handled = true;
+        }
+
+        /// <summary>键盘快进/快退：立即更新滑块与时间文字，再向播放器提交跳转。</summary>
+        private void NudgeSeek(double seconds)
+        {
+            if (_media.Duration <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            double target = Math.Clamp(
+                _media.Position.TotalSeconds + seconds,
+                0,
+                _media.Duration.TotalSeconds);
+
+            _updatingSeek = true;
+            try
+            {
+                SeekSlider.Value = target;
+            }
+            finally
+            {
+                _updatingSeek = false;
+            }
+
+            UpdateSeekLabels(TimeSpan.FromSeconds(target));
+            _ = _media.SeekAsync(TimeSpan.FromSeconds(target));
+        }
+
+        /// <summary>键盘音量增减：写入同一个滑杆，复用系统的音量同步逻辑。</summary>
+        private void NudgeVolume(double delta)
+        {
+            VolumeSlider.Value = Math.Clamp(VolumeSlider.Value + delta, 0, 100);
+        }
+
+        /// <summary>音量滑杆写入系统主音量（0..100 → 0..1）。</summary>
+        private void OnVolumeValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_updatingVolume)
+            {
+                return;
+            }
+
+            SystemVolumeService.SetVolume(e.NewValue / 100.0);
+            SetVolumeGlyph(e.NewValue <= 0.5);
+        }
+
+        /// <summary>从系统读取一次当前音量（展开面板时同步）。</summary>
+        private void SyncVolumeFromSystem()
+        {
+            if (_volumeDragging)
+            {
+                return;
+            }
+
+            _updatingVolume = true;
+            try
+            {
+                double volume = SystemVolumeService.GetVolume() * 100;
+                VolumeSlider.IsEnabled = SystemVolumeService.IsAvailable;
+                VolumeSlider.Opacity = SystemVolumeService.IsAvailable ? 1 : 0.4;
+                VolumeSlider.Value = volume;
+                SetVolumeGlyph(volume <= 0.5);
+            }
+            finally
+            {
+                _updatingVolume = false;
+            }
+        }
+
+        /// <summary>静音 / 正常音量：切换喇叭矢量图（对应 SF Symbols 的 speaker.slash / speaker.wave.2）。</summary>
+        private void SetVolumeGlyph(bool muted)
+        {
+            VolumeSpeaker.Visibility = muted ? Visibility.Collapsed : Visibility.Visible;
+            VolumeMuted.Visibility = muted ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>展开面板打开期间按 100ms 节流刷新进度与时间文字。</summary>
+        private void UpdateDetailProgress()
+        {
+            if (!_mediaMode || !_detail || _messageShowing)
+            {
+                return;
+            }
+
+            if ((_detailTick++ % 5) != 0)
+            {
+                return;
+            }
+
+            RefreshDetailProgress();
+        }
+
+        private void RefreshDetailProgress()
+        {
+            TimeSpan position = _media.Position;
+            double duration = Math.Max(0, _media.Duration.TotalSeconds);
+            bool seekable = duration > 0;
+
+            _updatingSeek = true;
+            try
+            {
+                SeekSlider.Maximum = Math.Max(1, duration);
+                // 时长未知（直播 / 播放器不回报时长）时进度条不可拖、压暗，避免出现"拖到 100% 却没反应"
+                SeekSlider.IsEnabled = seekable;
+
+                if (!_seeking)
+                {
+                    SeekSlider.Value = seekable
+                        ? Math.Clamp(position.TotalSeconds, 0, SeekSlider.Maximum)
+                        : 0;
+                    UpdateSeekLabels(position, _media.Duration);
+                }
+            }
+            finally
+            {
+                _updatingSeek = false;
+            }
+
+            // 音量每秒同步一次，避免与用户拖拽打架
+            if ((_volumeTick++ % 10) == 0)
+            {
+                SyncVolumeFromSystem();
+            }
+        }
+
+        private void UpdateSeekLabels(TimeSpan position, TimeSpan? durationOverride = null)
+        {
+            TimeSpan duration = durationOverride ?? _media.Duration;
+            if (duration <= TimeSpan.Zero)
+            {
+                // 没有总时长：只显示已播放时间，右侧用占位符而不是"−0:00"
+                ElapsedText.Text = FormatClock(position);
+                RemainingText.Text = "–:–";
+                return;
+            }
+
+            TimeSpan remaining = duration > position ? duration - position : TimeSpan.Zero;
+            ElapsedText.Text = FormatClock(position);
+            RemainingText.Text = "-" + FormatClock(remaining);
+        }
+
+        private static string FormatClock(TimeSpan time)
+        {
+            if (time < TimeSpan.Zero)
+            {
+                time = TimeSpan.Zero;
+            }
+
+            return time.TotalHours >= 1
+                ? time.ToString(@"h\:mm\:ss")
+                : time.ToString(@"m\:ss");
+        }
 
         #endregion
 
@@ -1089,13 +1886,17 @@ namespace Pynelith.Island.Views
 
             if (isClick)
             {
-                // 左键点击胶囊本体：展开/收起详情（按钮点击由 IsInteractive 过滤，不会走到这里）
-                if (_mediaMode)
+                if (_messageShowing)
                 {
-                    SetDetail(!_detail);
+                    // 点击正在展示的消息：立即平滑收起，并清掉排队中的后续消息
+                    DismissMessages();
                 }
-
-                Reposition();
+                else
+                {
+                    // 左键点击胶囊本体：待机时展开大时钟，播放时展开曲目详情（按钮点击已被过滤）
+                    SetDetail(!_detail);
+                    Reposition();
+                }
             }
         }
 
@@ -1122,8 +1923,65 @@ namespace Pynelith.Island.Views
         {
             int count = _feed?.Notifications.Count ?? 0;
 
-            IdleTime.Text = DateTime.Now.ToString("HH:mm");
+            DateTime now = DateTime.Now;
+            IdleTime.Text = now.ToString("HH:mm");
             IdleHint.Text = count > 0 ? string.Format("{0} 条新通知", count) : "待机";
+
+            IdleDetailTime.Text = IdleTime.Text;
+            IdleDetailDate.Text = now.ToString("M月d日 dddd", ZhCulture);
+
+            ApplyIdleVisibility();
+            UpdateMetricsText();
+            RemeasureIdle();
+        }
+
+        /// <summary>按用户开关决定空闲态各段的显隐，分隔线只在两侧都有内容时出现。</summary>
+        private void ApplyIdleVisibility()
+        {
+            bool clock = Config.ShowClock;
+            bool hint = Config.ShowIdleHint;
+            bool metrics = Config.ShowSystemMetrics;
+
+            IdleTime.Visibility = VisibleIf(clock);
+            IdleHint.Visibility = VisibleIf(hint);
+            IdleMetrics.Visibility = VisibleIf(metrics);
+            IdleDetailMetrics.Visibility = VisibleIf(metrics);
+
+            IdleClockDivider.Visibility = VisibleIf(clock && hint);
+            IdleMetricsDivider.Visibility = VisibleIf(metrics && (clock || hint));
+        }
+
+        private static Visibility VisibleIf(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+
+        /// <summary>
+        /// 实测空闲态内容宽度并同步胶囊尺寸：用户增减显示项后胶囊自动收缩/伸展，
+        /// 永远不会出现文字被裁切或留白过多。
+        /// </summary>
+        private void RemeasureIdle()
+        {
+            IdleView.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            double measured = IdleView.DesiredSize.Width + 16;
+
+            if (Math.Abs(measured - _idleMinWidth) < 0.5)
+            {
+                return;
+            }
+
+            _idleMinWidth = measured;
+
+            if (_springRunning)
+            {
+                // 动画期间交给弹簧逐帧应用，避免与形变互相打断
+                return;
+            }
+
+            ApplyWindowSize();
+            ApplyMorph(_p);
+
+            if (!_dragging)
+            {
+                Reposition();
+            }
         }
 
         #endregion
@@ -1134,6 +1992,7 @@ namespace Pynelith.Island.Views
             _clockTimer.Stop();
             _lyricTimer.Stop();
             _topmostTimer.Stop();
+            _messageHoldTimer.Stop();
 
             _service.Changed -= OnConfigChanged;
             _media.StateChanged -= OnMediaStateChanged;
@@ -1142,7 +2001,12 @@ namespace Pynelith.Island.Views
 
             _feed.Dispose();
             _bridge?.Dispose();
-            _glass.Dispose();
+
+            _metrics.Updated -= OnMetricsUpdated;
+            _metrics.Dispose();
+
+            _glass?.Dispose();
+            _glass = null;
 
             base.OnClosed(e);
         }

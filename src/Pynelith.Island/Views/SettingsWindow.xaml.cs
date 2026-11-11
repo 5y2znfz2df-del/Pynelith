@@ -24,6 +24,7 @@ namespace Pynelith.Island.Views
         private static readonly Brush CardBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x2A, 0x2A, 0x2D));
         private static readonly Brush DividerBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x3A, 0x3A, 0x3D));
         private static readonly Brush FieldBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x3A, 0x3A, 0x3D));
+        private static readonly Brush AccentBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x0A, 0x84, 0xFF));
 
         private readonly ConfigService _service;
         private readonly LyricsService _lyrics;
@@ -57,7 +58,71 @@ namespace Pynelith.Island.Views
             _loading = false;
 
             SelectPage("general");
+
+            StateChanged += OnWindowStateChanged;
         }
+
+        #region 窗口外壳（macOS 交通灯）
+
+        private void OnCloseWindow(object sender, RoutedEventArgs e) => Close();
+
+        private void OnMinimizeWindow(object sender, RoutedEventArgs e)
+            => WindowState = WindowState.Minimized;
+
+        private void OnZoomWindow(object sender, RoutedEventArgs e)
+            => WindowState = WindowState == WindowState.Maximized
+                ? WindowState.Normal
+                : WindowState.Maximized;
+
+        /// <summary>标题栏拖动；双击空白处等同于绿色按钮（放大 / 还原）。</summary>
+        private void OnTitleBarMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left || IsButtonSource(e.OriginalSource as DependencyObject))
+            {
+                return;
+            }
+
+            if (e.ClickCount == 2)
+            {
+                OnZoomWindow(sender, e);
+                return;
+            }
+
+            try
+            {
+                DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // 鼠标在拖动开始前已释放：忽略即可。
+            }
+        }
+
+        private static bool IsButtonSource(DependencyObject? source)
+        {
+            while (source != null)
+            {
+                if (source is ButtonBase)
+                {
+                    return true;
+                }
+
+                source = VisualTreeHelper.GetParent(source);
+            }
+
+            return false;
+        }
+
+        /// <summary>最大化时去掉圆角与描边，避免圆角在屏幕边缘留下缺口。</summary>
+        private void OnWindowStateChanged(object? sender, EventArgs e)
+        {
+            bool maximized = WindowState == WindowState.Maximized;
+            WindowFrame.CornerRadius = new CornerRadius(maximized ? 0 : 12);
+            WindowFrame.BorderThickness = new Thickness(maximized ? 0 : 1);
+            ZoomLight.ToolTip = maximized ? "还原" : "放大";
+        }
+
+        #endregion
 
         #region 侧边栏
 
@@ -75,6 +140,7 @@ namespace Pynelith.Island.Views
             {
                 NewEntry("general", "通用", "⚙", LinearGradient("#8E8E93", "#636366")),
                 NewEntry("appearance", "外观", "◐", LinearGradient("#BF5AF2", "#8944AB")),
+                NewEntry("display", "显示内容", "▤", LinearGradient("#30D158", "#248A3D")),
                 NewEntry("size", "尺寸与位置", "⇲", LinearGradient("#64D2FF", "#0A84FF")),
                 NewEntry("notify", "通知与提示", "🔔", LinearGradient("#FF6961", "#FF3B30")),
                 NewEntry("music", "音乐", "♫", LinearGradient("#FF6482", "#FF2D55")),
@@ -172,6 +238,7 @@ namespace Pynelith.Island.Views
         {
             _pages["general"] = BuildGeneralPage();
             _pages["appearance"] = BuildAppearancePage();
+            _pages["display"] = BuildDisplayPage();
             _pages["size"] = BuildSizePage();
             _pages["notify"] = BuildNotifyPage();
             _pages["music"] = BuildMusicPage();
@@ -184,6 +251,7 @@ namespace Pynelith.Island.Views
             var island = NewGroup(page, "灵动岛");
             AddStepper(island, "动画时长 (ms)", 0, 800, 20, 0,
                 () => Config.AnimationDurationMs, v => Config.AnimationDurationMs = (int)Math.Round(v));
+            AddNote(island, "产品定位", "桌面顶部的轻量状态胶囊：时间 + CPU/内存；有音乐时自动接管显示");
 
             var config = NewGroup(page, "配置");
             AddNote(config, "配置文件", _service.ConfigPath);
@@ -194,6 +262,17 @@ namespace Pynelith.Island.Views
         private UIElement BuildAppearancePage()
         {
             var page = NewPage();
+
+            var theme = NewGroup(page, "主题");
+            AddSegmented(theme, "界面主题", ThemeStyles.All,
+                () => Config.Theme, v => Config.Theme = v);
+            AddNote(theme, "液态玻璃", "抓屏折射 + 色散，最接近真实玻璃；会占用少量 CPU");
+            AddNote(theme, "纯黑 / 磨砂", "静态底色，不做屏幕采样，适合低配机器或省电场景");
+
+            var compat = NewGroup(page, "兼容");
+            AddToggle(compat, "兼容模式（截图与录屏可见）",
+                () => Config.ScreenshotCompatible, v => Config.ScreenshotCompatible = v);
+            AddDescription(compat, "液态玻璃模式下，截图和录屏中不会显示灵动岛。");
 
             var glass = NewGroup(page, "玻璃");
             AddStepper(glass, "玻璃模糊强度", 0, 1, 0.01, 2,
@@ -208,6 +287,27 @@ namespace Pynelith.Island.Views
             return page;
         }
 
+        private UIElement BuildDisplayPage()
+        {
+            var page = NewPage();
+
+            var content = NewGroup(page, "空闲态内容");
+            AddToggle(content, "显示时间",
+                () => Config.ShowClock, v => Config.ShowClock = v);
+            AddToggle(content, "显示待机文字",
+                () => Config.ShowIdleHint, v => Config.ShowIdleHint = v);
+            AddToggle(content, "显示 CPU / 内存占用",
+                () => Config.ShowSystemMetrics, v => Config.ShowSystemMetrics = v);
+            AddNote(content, "自适应宽度", "胶囊按实际内容自动收缩/展开，关闭全部选项后只保留提示点");
+
+            var metrics = NewGroup(page, "资源监控");
+            AddNote(metrics, "数据来源", "Win32 GetSystemTimes / GlobalMemoryStatusEx，每秒刷新一次");
+            AddNote(metrics, "采样开销", "只做两次系统调用，不依赖性能计数器；关闭后完全停止采样");
+            AddNote(metrics, "高负载提示", "CPU 或内存超过 85% 时数值转为橙红色");
+
+            return page;
+        }
+
         private UIElement BuildSizePage()
         {
             var page = NewPage();
@@ -215,6 +315,7 @@ namespace Pynelith.Island.Views
             var collapsed = NewGroup(page, "空闲尺寸");
             AddStepper(collapsed, "宽度", 100, 480, 2, 0,
                 () => Config.CollapsedWidth, v => Config.CollapsedWidth = v);
+            AddNote(collapsed, "自适应", "实际宽度不会小于内容宽度，避免时间/监控文字被裁切");
             AddStepper(collapsed, "高度", 20, 96, 1, 0,
                 () => Config.CollapsedHeight, v => Config.CollapsedHeight = v);
 
@@ -240,6 +341,7 @@ namespace Pynelith.Island.Views
             AddToggle(takeover, "接管全部系统通知",
                 () => Config.TakeoverNotifications, v => Config.TakeoverNotifications = v);
             AddNote(takeover, "接管状态", SystemNotificationBridge.Status);
+            AddNote(takeover, "说明", "接管只决定是否撤下系统原生通知；消息始终会在岛内展示");
 
             var link = new TextBlock
             {
@@ -262,12 +364,12 @@ namespace Pynelith.Island.Views
             };
             takeover.Children.Add(link);
 
-            var display = NewGroup(page, "展示");
-            AddStepper(display, "通知停留 (ms)", 1000, 15000, 500, 0,
+            var display = NewGroup(page, "消息展示");
+            AddStepper(display, "消息停留 (ms)", 1500, 15000, 500, 0,
                 () => Config.NotificationDurationMs, v => Config.NotificationDurationMs = (int)Math.Round(v));
-
-            var blacklist = NewGroup(page, "黑名单");
-            AddMultiline(blacklist, "每行一个应用名，命中的通知直接丢弃");
+            AddNote(display, "展示方式", "通知到达时岛自动展开并完整显示正文，停留后平滑收回");
+            AddNote(display, "过滤规则", "无黑白名单：所有系统通知都会展示");
+            AddNote(display, "授权", "若列表为空，请在上方打开「通知访问」允许 Pynelith 读取通知");
 
             return page;
         }
@@ -294,7 +396,8 @@ namespace Pynelith.Island.Views
 
             var control = NewGroup(page, "播放控制");
             AddNote(control, "控制通道", "SMTC 系统媒体传输控件（全局会话自动扫描）");
-            AddNote(control, "可用操作", "播放 / 暂停、上一首、下一首；点击岛本体 = 播放/暂停");
+            AddNote(control, "可用操作", "播放 / 暂停、上一首、下一首；点击岛本体 = 展开详情");
+            AddNote(control, "显示时机", "仅在检测到正在播放的会话时出现；播放器退出后自动回到待机");
 
             return page;
         }
@@ -417,6 +520,96 @@ namespace Pynelith.Island.Views
 
             Grid.SetColumn(button, 1);
             row.Children.Add(button);
+        }
+
+        /// <summary>分段选择器（主题切换用）：一组互斥按钮，选中项高亮。</summary>
+        private void AddSegmented(
+            StackPanel rows,
+            string label,
+            (string Key, string Name)[] options,
+            Func<string> read,
+            Action<string> write)
+        {
+            var row = NewRow(rows, label);
+
+            var group = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var buttons = new List<(Button Button, string Key)>();
+
+            foreach (var option in options)
+            {
+                string key = option.Key;
+                var button = new Button
+                {
+                    Content = option.Name,
+                    FontSize = 11.5,
+                    Foreground = TextPrimary,
+                    Cursor = Cursors.Hand,
+                    Margin = new Thickness(0, 0, 4, 0),
+                    Padding = new Thickness(0),
+                    Template = SegmentButtonTemplate(),
+                };
+
+                button.Click += (_, _) =>
+                {
+                    if (!_loading)
+                    {
+                        write(key);
+                    }
+
+                    RefreshSegments(buttons, read);
+                };
+
+                group.Children.Add(button);
+                buttons.Add((button, key));
+            }
+
+            Grid.SetColumn(group, 1);
+            row.Children.Add(group);
+
+            RefreshSegments(buttons, read);
+            _refreshers.Add(() => RefreshSegments(buttons, read));
+        }
+
+        private void RefreshSegments(List<(Button Button, string Key)> buttons, Func<string> read)
+        {
+            string current = read();
+            foreach (var item in buttons)
+            {
+                item.Button.Background = string.Equals(item.Key, current, StringComparison.Ordinal)
+                    ? AccentBrush
+                    : FieldBrush;
+            }
+        }
+
+        private static ControlTemplate SegmentButtonTemplate()
+        {
+            var factory = new FrameworkElementFactory(typeof(Border));
+            factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(7));
+            factory.SetValue(Border.PaddingProperty, new Thickness(11, 4, 11, 4));
+            factory.SetValue(Border.BackgroundProperty,
+                new TemplateBindingExtension(Control.BackgroundProperty));
+
+            var content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+            factory.AppendChild(content);
+
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = factory };
+
+            var hover = new Trigger
+            {
+                Property = UIElement.IsMouseOverProperty,
+                Value = true,
+            };
+            hover.Setters.Add(new Setter(UIElement.OpacityProperty, 0.82));
+            template.Triggers.Add(hover);
+
+            return template;
         }
 
         private static ControlTemplate DarkButtonTemplate()
@@ -543,55 +736,17 @@ namespace Pynelith.Island.Views
             row.Children.Add(noteText);
         }
 
-        private void AddMultiline(StackPanel rows, string hint)
+        /// <summary>开关下方的整行说明文字（不占行标题列，与系统设置的分组说明一致）。</summary>
+        private void AddDescription(StackPanel rows, string text)
         {
-            var box = new TextBox
-            {
-                Height = 76,
-                AcceptsReturn = true,
-                Background = new SolidColorBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF)),
-                Foreground = TextPrimary,
-                CaretBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x0A, 0x84, 0xFF)),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(10, 7, 10, 7),
-                FontSize = 12,
-                Margin = new Thickness(4, 6, 4, 8),
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            };
-
-            box.TextChanged += (_, _) =>
-            {
-                if (_loading)
-                {
-                    return;
-                }
-
-                var names = new List<string>();
-                foreach (string line in box.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    string trimmed = line.Trim();
-                    if (trimmed.Length > 0)
-                    {
-                        names.Add(trimmed);
-                    }
-                }
-
-                Config.NotificationBlacklist = names;
-            };
-
-            rows.Children.Add(box);
-
-            _refreshers.Add(() =>
-            {
-                box.Text = string.Join(Environment.NewLine, Config.NotificationBlacklist);
-            });
-
             rows.Children.Add(new TextBlock
             {
-                Text = hint,
-                FontSize = 10.5,
+                Text = text,
+                FontSize = 11,
                 Foreground = TextSecondary,
-                Margin = new Thickness(14, 0, 14, 8),
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 16,
+                Margin = new Thickness(14, -8, 14, 12),
             });
         }
 

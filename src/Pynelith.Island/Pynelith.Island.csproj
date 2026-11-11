@@ -9,12 +9,26 @@
     <AssemblyName>Pynelith.Island</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\assets\icon\pynelith.ico</ApplicationIcon>
-    <Description>灵动岛本体模块：悬浮动态岛、停靠定位、展开/收起动画、设置窗口与 JSON 配置（玻璃效果全部委托 Pynelith.Glass）</Description>
+    <!-- 单文件发布：WPF 原生库（wpfgfx / PresentationNative / D3DCompiler 等）必须一起进包，
+         否则安装器只释放 exe 时会因缺少原生 DLL 在创建窗口时崩溃（DllNotFoundException）。 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- 压缩只在独立发布时受支持；框架依赖发布走默认（未压缩）单文件 -->
+    <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <Description>灵动岛本体模块：时钟与 CPU/内存监控、悬浮动态岛、停靠定位、展开/收起动画、媒体与歌词、设置窗口与 JSON 配置（玻璃效果全部委托 Pynelith.Glass）</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- 渲染能力全部来自渲染模块的公开门面，本模块不引用任何渲染内部实现 -->
     <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 苹方 SC 子集（GB2312 + 拉丁字符，常规/粗体两个字重）：
+         作为 WPF 资源嵌入，pack URI 引用，无需用户额外安装字体。
+         原始 TTF 每份约 11MB，子集后约 2.3MB，避免安装包体积失控。 -->
+    <Resource Include="Fonts\PingFangSC-Regular.ttf" />
+    <Resource Include="Fonts\PingFangSC-Bold.ttf" />
   </ItemGroup>
 
 </Project>

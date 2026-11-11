@@ -4,15 +4,15 @@
 
 # Pynelith
 
-**Windows 上的灵动岛 · 真液态玻璃 · 系统媒体接管 · 多源歌词**
+**Windows 桌面的时间胶囊 · 系统监控 · 媒体伴侣**
 
-在屏幕顶部悬浮一枚会呼吸的胶囊：跟着系统里正在播放的音乐一起形变，显示封面与逐行歌词，
-点一下展开详情，全程 60fps。
+在屏幕顶部悬浮一枚会呼吸的胶囊：平时是时钟和 CPU / 内存仪表，播放音乐时自动形变为
+封面与逐行歌词，点一下展开详情，全程 60fps。
 
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.1.0-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.1.3-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -22,17 +22,26 @@
 
 ## 为什么是 Pynelith
 
-市面上的"Windows 灵动岛"大多只是一个会动的圆角矩形。Pynelith 把三件事同时做对了：
+市面上的"Windows 灵动岛"大多只是一个会动的圆角矩形，或者一个只能控制音乐的挂件。
+Pynelith 的做法是：**先让它在不播放任何东西时也有用**，再把玻璃和音乐做到位。
 
-**① 真液态玻璃，不是毛玻璃**
+**① 首先是一枚时间与状态胶囊**
+时钟、CPU 与内存占用常驻显示，每一段都能单独开关；胶囊宽度随内容自适应，
+全部关掉就只剩一枚最小胶囊，不占视野。点一下待机胶囊，还能展开大时钟与日期。
+
+**② 三套主题，按机器与喜好选**
+液态玻璃 / 纯黑 / 磨砂一键切换：玻璃主题做抓屏折射与色散；纯黑与磨砂完全不做屏幕采样，
+零抓屏开销，适合低配机器、远程桌面和 OLED 屏。
+
+**③ 真液态玻璃，不是毛玻璃**
 背景**保持清晰**，只在边缘做折射与色散——像一块真的玻璃压住了桌面。渲染能力全部封装在独立模块
 `Pynelith.Glass` 里，UI 层零着色器、零 Composition 代码，一行调用即可把玻璃贴在任意元素上。
 
-**② 接管系统媒体，而不是轮询某个播放器**
+**④ 接管系统媒体，而不是轮询某个播放器**
 基于 SMTC（System Media Transport Controls）自动扫描全局会话，优先跟随"正在播放"的那一个。
-换歌、播放状态、封面、时间轴全部实时同步；播放/暂停、上一首/下一首通过系统通道下发。
+换歌、播放状态、封面、时间轴全部实时同步；播放器退出后自动回到待机，不会残留暂停界面。
 
-**③ 歌词是真对齐的**
+**⑤ 歌词是真对齐的**
 QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择优），本地缓存，手动导入兜底；
 再配一个随时可调的时间偏移——即使歌词源和你的音频版本不同，也能在 10 秒内对齐。
 
@@ -42,7 +51,9 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 <tr><td width="50%" valign="top">
 
 **外观**
+- 三套主题：液态玻璃 / 纯黑 / 磨砂
 - 真液态玻璃：清晰背景 + 边缘折射 + 色散
+- 内置苹方 SC 子集字体（GB2312 + 拉丁，正文中黑 / 标题粗体），无需用户安装
 - 圆角随尺寸自适应，封面按真实圆角裁剪
 - 深色 / 浅色双套图标与配色
 - 贴顶居中停靠，支持拖动改位置
@@ -59,7 +70,8 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 - SMTC 自动扫描 / 跟随 / 播放控制
 - 专辑封面、曲名、歌手、播放进度
 - 空闲时自动收起为时间胶囊
-- 点击胶囊展开详情（大封面 + 曲目 + 歌词）
+- 点击胶囊展开 Apple Music 风格完整面板
+- 进度拖拽跳转、系统音量、随机 / 循环模式
 
 **歌词**
 - 三源自动匹配，本地磁盘缓存
@@ -70,19 +82,38 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 </td></tr>
 </table>
 
+**消息**
+- 所有系统通知直接进岛，无黑白名单过滤
+- 到达即自动展开，完整显示应用名与正文
+- 文本自动换行、按内容测高，超长消息逐级缩字号不截断
+- 停留约 5 秒后平滑收回，无需任何点击
+
+**实用**
+- 时钟常驻显示，可单独开关；点击待机胶囊展开大时钟与日期
+- 待机与媒体两种形态都支持点击展开 / 收起
+- CPU / 内存实时占用（1 秒采样，超过 85% 变色警示）
+- 待机文字与资源监控均可隐藏，胶囊宽度随内容自适应
+- 播放器退出（含网易云完全退出）后自动回到待机，无残留界面
+- 兼容模式：液态玻璃下开启后，岛在截图与录屏中可见（自动退化为静态磨砂底）
+
 **工程**
 - 独立设置窗口，所有参数即时生效（JSON 配置，防抖落盘）
+- 设置窗口采用 macOS 交通灯（关闭 / 缩小 / 放大）与无边框圆角外壳
 - 位置与 Z 序守护：拦截外部 `SetWindowPos`，防止点击后被系统搬走、被其它窗口遮挡
+- 遵循系统「显示动画」辅助功能设置，关闭后所有形变直接落位
+- 展开面板支持键盘操作（空格 / ←→ / ↑↓ / Esc）
 - 自带原生安装器：管理员提权、系统文件夹对话框选路径、进度/错误反馈、控制面板可卸载
 
 ## 快速开始
 
 ### 方式一：安装包（推荐）
 
-下载 `beta0.1.0.exe` → 双击 → UAC 允许 → 选择安装位置 → 安装。
+下载 `beta0.1.3.exe` → 双击 → UAC 允许 → 选择安装位置 → 安装。
 
-安装器会释放程序、创建桌面与开始菜单快捷方式，并注册卸载信息。
-**自包含单文件，目标机器无需安装 .NET 运行时。**
+安装器会释放程序、创建桌面与开始菜单快捷方式、注册卸载信息与登录自启，
+完成后自动启动灵动岛。安装包约 **9.4MB**（程序载荷 + 嵌入字体压缩内嵌）。
+**目标机器需要安装 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)**，
+否则双击时会由系统提示下载。
 
 ### 方式二：从源码构建
 
@@ -98,11 +129,11 @@ dotnet run  --project src/Pynelith.Island/Pynelith.Island.csproj -c Release
 构建安装包：
 
 ```bash
-# 1) 发布主程序（自包含单文件，也就是安装器内嵌的载荷）
+# 1) 发布主程序（框架依赖单文件，也就是安装器内嵌的载荷）
 dotnet publish src/Pynelith.Island/Pynelith.Island.csproj -c Release -r win-x64 \
-  --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+  --self-contained false
 
-# 2) 发布安装器（会自动内嵌上一步的 exe）
+# 2) 发布安装器（构建时会自动把上一步的 exe 压缩成 zip 再内嵌）
 dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 ```
 
@@ -110,20 +141,47 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 
 | 操作 | 效果 |
 | --- | --- |
-| 左键单击胶囊 | 展开 / 收起详情（大封面 + 曲目信息） |
+| 系统通知到达 | 岛自动展开显示完整正文，约 5 秒后自动收起 |
+| 左键单击胶囊（待机） | 展开 / 收起大时钟、日期与资源占用 |
+| 左键单击胶囊（播放中） | 展开 / 收起 Apple Music 风格播放面板 |
 | 点击 ⏮ ⏸ ⏭ | 上一首 / 播放暂停 / 下一首（经 SMTC） |
+| 拖动进度条 | 跳转到任意播放位置 |
+| 拖动音量条 | 调整系统输出音量（与任务栏音量同步） |
+| 点击随机 / 循环 | 切换随机播放；循环依次为 关闭 → 列表 → 单曲 |
+| 面板内键盘 | 空格播放/暂停、←→ 快退快进 5 秒、↑↓ 音量、Esc 收起 |
+| 设置 → 外观 → 兼容模式 | 截图 / 录屏时能看到灵动岛（关闭实时玻璃） |
 | 拖动胶囊 | 改变停靠位置（自动写回配置） |
 | 右键胶囊 | 歌词提前 / 延后 200ms、归零、设置、退出 |
 
+不播放音乐时，胶囊显示**时间**、待机文字与 **CPU / 内存**占用；三者可在
+设置 →「显示内容」里分别开关，胶囊宽度会跟着内容自动收缩。
+
 配置位于 `%AppData%\Pynelith\config.json`，歌词缓存位于 `%AppData%\Pynelith\lyrics`。
+
+## 开机自启与卸载
+
+安装完成后安装器会**立即启动灵动岛**，并写入当前用户的登录自启项
+（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`），下次登录自动恢复运行。
+程序带单实例保护，重复启动不会出现第二个岛。
+
+卸载有三个入口：
+
+- 安装程序底部的「卸载已安装版本」
+- Windows 设置 → 应用 → 已安装的应用 → Pynelith → 卸载
+- 安装目录下的 `uninstall.exe`
+
+卸载会一并清除：程序文件、桌面 / 开始菜单快捷方式、开机自启项、
+`%AppData%\Pynelith`（配置、歌词缓存、崩溃日志）以及单文件运行时产生的临时解包目录。
 
 <details>
 <summary><b>主要配置项</b></summary>
 
 | 字段 | 说明 |
 | --- | --- |
+| `Theme` | 界面主题：`LiquidGlass` / `PureBlack` / `Frosted` |
+| `ShowClock` / `ShowIdleHint` / `ShowSystemMetrics` | 空闲态时间 / 待机文字 / 资源监控开关 |
 | `GlobalScale` | 全局缩放（0.5 – 2.0），同时作用于尺寸与排版 |
-| `CollapsedWidth` / `CollapsedHeight` | 空闲胶囊尺寸（默认 124 × 24） |
+| `CollapsedWidth` / `CollapsedHeight` | 空闲胶囊尺寸（默认 180 × 26，实际宽度不小于内容宽度） |
 | `ExpandedWidth` | 媒体态宽度（默认 200，高度始终等于空闲高度） |
 | `ScreenOffsetX` / `ScreenOffsetY` | 相对"贴顶居中"的偏移 |
 | `GlassBlurStrength` | 玻璃染色浓度 0 – 1 |
@@ -132,6 +190,7 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | `LyricsEnabled` | 是否显示歌词行 |
 | `LyricsSourceNetease` / `LyricsSourceQQ` / `LyricsSourceKugou` | 三源开关 |
 | `LyricOffsetMs` | 歌词整体偏移（正值 = 提前） |
+| `NotificationDurationMs` | 消息在岛内停留时长（默认 5000ms） |
 | `TakeoverNotifications` | 接管系统通知 |
 
 </details>
@@ -143,10 +202,12 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 运行时 | .NET 8 / WPF（`net8.0-windows10.0.19041.0`） |
 | 玻璃渲染 | `Pynelith.Glass`：Win32 + DWM 合成、GDI 抓屏采样、WPF 图层注入 |
 | 媒体 | WinRT SMTC（`GlobalSystemMediaTransportControlsSessionManager`） |
-| 动画 | `CompositionTarget.Rendering` 阻尼弹簧 + 固定子步长积分 |
+| 系统监控 | Win32 `GetSystemTimes` + `GlobalMemoryStatusEx`，1 秒采样，零额外依赖 |
+| 动画 | `DispatcherTimer` 驱动的阻尼弹簧 + 固定子步长积分 |
 | 窗口 | 无边框分层窗口、`WM_WINDOWPOSCHANGING` 拦截、`SetWindowPos` 置顶守护 |
+| 字体 | 苹方 SC 子集（中黑 / 粗体）作为 WPF 资源嵌入，pack URI 引用 |
 | 配置 | `System.Text.Json`，单实例 + 防抖落盘 |
-| 安装器 | WPF 自研：`requireAdministrator`、`OpenFolderDialog`、ICO 内嵌载荷 |
+| 安装器 | WinForms 自研：`requireAdministrator`、文件夹选择、zip 压缩内嵌载荷（约 9.4MB） |
 
 ## 项目结构
 
@@ -154,7 +215,7 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 Pynelith/
 ├─ src/
 │  ├─ Pynelith.Glass/      # 液态玻璃渲染模块（对外只有 Install / Update）
-│  ├─ Pynelith.Island/     # 灵动岛本体：停靠、形变、媒体、歌词、设置
+│  ├─ Pynelith.Island/     # 灵动岛本体：时钟、系统监控、停靠、形变、媒体、歌词、设置
 │  └─ Pynelith.Setup/      # 原生安装器（自包含单文件 + 内嵌载荷）
 ├─ assets/icon/            # 图标 SVG / ICO / 多尺寸 PNG + 使用规范
 ├─ docs/preview.png        # README 预览图
@@ -166,11 +227,14 @@ Pynelith/
 
 - **播放器不报进度时无法自动对齐**：例如网易云的 SMTC 时间轴恒为 0，此时以"换歌事件"作为
   0 点推算，个别曲目仍需用右键偏移手动校准一次。Spotify、QQ 音乐等会上报进度的播放器无需手动干预。
+- **消息展示依赖系统授权**：首次运行需要在「系统设置 → 通知 → 通知访问」中允许 Pynelith，
+  否则读取不到系统通知（设置页「通知与提示」里有直达链接）。
 - **玻璃抓屏与动画共用 UI 线程**：玻璃层在 UI 线程做 BitBlt 采样（约 24fps），因此形变动画中
   偶有 1–3 帧被拉长到 35ms 左右。已通过几何刷新节流把影响压到最小。
 
 ## Roadmap
 
+- [ ] 更多实用小组件（电量、网速、天气）
 - [ ] 逐字（卡拉 OK）歌词高亮
 - [ ] 通知接管的完整落地（当前为 SMTC + 通知桥骨架）
 - [ ] 多显示器与逐屏 DPI 边界情况

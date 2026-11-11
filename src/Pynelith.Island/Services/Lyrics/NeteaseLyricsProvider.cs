@@ -26,7 +26,6 @@ namespace Pynelith.Island.Services.Lyrics
 
             long songId = 0;
             double bestScore = 0;
-            double bestProximity = 0;
 
             using (JsonDocument doc = JsonDocument.Parse(searchJson))
             {
@@ -40,21 +39,24 @@ namespace Pynelith.Island.Services.Lyrics
                 {
                     string name = song.TryGetProperty("name", out JsonElement nameEl) ? nameEl.GetString() ?? "" : "";
                     string singer = ArtistText(song);
-                    double score = LyricsMatch.Score(name, singer, title, artist);
-                    if (score < 2)
-                    {
-                        continue;
-                    }
 
                     long candidateMs = song.TryGetProperty("duration", out JsonElement durEl) && durEl.ValueKind == JsonValueKind.Number
                         ? durEl.GetInt64()
                         : 0;
-                    double proximity = LyricsMatch.DurationProximity(TimeSpan.FromMilliseconds(candidateMs), duration);
+                    TimeSpan candidateDuration = TimeSpan.FromMilliseconds(candidateMs);
 
-                    if (score > bestScore || (Math.Abs(score - bestScore) < 0.01 && proximity > bestProximity))
+                    // 硬性校验：标题、歌手、时长必须都对得上，避免抓到同名的其它歌
+                    if (!LyricsMatch.IsTrustworthy(name, singer, candidateDuration, title, artist, duration))
+                    {
+                        continue;
+                    }
+
+                    double score = LyricsMatch.Score(name, singer, title, artist)
+                        + LyricsMatch.DurationProximity(candidateDuration, duration) * 0.5;
+
+                    if (score > bestScore)
                     {
                         bestScore = score;
-                        bestProximity = proximity;
                         songId = song.TryGetProperty("id", out JsonElement idEl) ? idEl.GetInt64() : 0;
                     }
                 }

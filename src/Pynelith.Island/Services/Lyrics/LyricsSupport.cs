@@ -80,7 +80,28 @@ namespace Pynelith.Island.Services.Lyrics
             return builder.ToString();
         }
 
-        /// <summary>≥2 视为命中（标题匹配），歌手相近再 +1。</summary>
+        /// <summary>歌手是否可视为同一人（互相包含；目标没歌手时视为兼容）。</summary>
+        public static bool ArtistCompatible(string candArtist, string artist)
+        {
+            if (string.IsNullOrWhiteSpace(artist))
+            {
+                return true;
+            }
+
+            string target = Normalize(artist);
+            string cand = Normalize(candArtist);
+            if (target.Length == 0 || cand.Length == 0)
+            {
+                return false;
+            }
+
+            return cand.Contains(target) || target.Contains(cand);
+        }
+
+        /// <summary>
+        /// 候选曲目打分：标题完全相等 3 分、仅包含 1.5 分，歌手兼容再 +2。
+        /// 只用于"择优"，是否可信由 <see cref="IsTrustworthy"/> 决定。
+        /// </summary>
         public static double Score(string candTitle, string candArtist, string title, string artist)
         {
             string target = Normalize(title);
@@ -95,20 +116,55 @@ namespace Pynelith.Island.Services.Lyrics
                 return 0;
             }
 
-            double score = 2;
-
-            if (!string.IsNullOrWhiteSpace(artist))
+            double score = target == cand ? 3 : 1.5;
+            if (ArtistCompatible(candArtist, artist))
             {
-                string targetArtist = Normalize(artist);
-                string candArtistNorm = Normalize(candArtist);
-                if (targetArtist.Length > 0
-                    && (candArtistNorm.Contains(targetArtist) || targetArtist.Contains(candArtistNorm)))
-                {
-                    score += 1;
-                }
+                score += 2;
             }
 
             return score;
+        }
+
+        /// <summary>
+        /// 硬性可信校验：标题必须匹配；标题只是"包含"时歌手也必须匹配；
+        /// 双方时长相差超过 12 秒视为不同版本（Live / Remix / 翻唱），直接拒绝。
+        /// </summary>
+        public static bool IsTrustworthy(
+            string candTitle,
+            string candArtist,
+            TimeSpan candDuration,
+            string title,
+            string artist,
+            TimeSpan duration)
+        {
+            string target = Normalize(title);
+            string cand = Normalize(candTitle);
+            if (target.Length == 0 || cand.Length == 0)
+            {
+                return false;
+            }
+
+            bool exact = string.Equals(cand, target, StringComparison.Ordinal);
+            if (!exact
+                && !cand.Contains(target)
+                && !target.Contains(cand))
+            {
+                return false;
+            }
+
+            if (!exact && !ArtistCompatible(candArtist, artist))
+            {
+                return false;
+            }
+
+            if (duration > TimeSpan.Zero
+                && candDuration > TimeSpan.Zero
+                && Math.Abs((candDuration - duration).TotalSeconds) > 12)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>时长的接近程度（用于同分候选的择优），返回 0..1。</summary>

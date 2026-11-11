@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Windows;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services.Lyrics;
@@ -12,12 +13,29 @@ namespace Pynelith.Island
     /// </summary>
     public partial class App : Application
     {
+        /// <summary>单实例互斥名：安装器自动拉起、开机自启、用户手动启动都只会有一个岛。</summary>
+        private const string SingleInstanceMutexName = @"Local\Pynelith.Island.SingleInstance";
+
         private ConfigService? _configService;
         private MediaSessionService? _media;
+        private Mutex? _instanceMutex;
+        private bool _ownsMutex;
 
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // 单实例：重复启动直接退出，避免托盘/顶栏出现多个灵动岛，也避免安装器
+            // 自动拉起时与用户已手动打开的实例相互抢停靠位置。
+            _instanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
+            _ownsMutex = createdNew;
+            if (!createdNew)
+            {
+                _instanceMutex.Dispose();
+                _instanceMutex = null;
+                Shutdown();
+                return;
+            }
 
             // 崩溃留痕：任何未处理异常都写到 %AppData%\Pynelith\crash.log
             DispatcherUnhandledException += (_, args) =>
@@ -74,6 +92,22 @@ namespace Pynelith.Island
         {
             _media?.Dispose();
             _configService?.Dispose();
+
+            if (_ownsMutex && _instanceMutex != null)
+            {
+                try
+                {
+                    _instanceMutex.ReleaseMutex();
+                }
+                catch (ApplicationException)
+                {
+                    // 互斥量归属异常时忽略，进程退出后系统会自动释放。
+                }
+            }
+
+            _instanceMutex?.Dispose();
+            _instanceMutex = null;
+
             base.OnExit(e);
         }
     }

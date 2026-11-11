@@ -12,7 +12,7 @@
         Topmost="True"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
-        FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI">
+        FontFamily="pack://application:,,,/Pynelith.Island;component/Fonts/#PingFang SC">
 
     <Window.Resources>
         <SolidColorBrush x:Key="TextPrimary" Color="#F5FFFFFF"/>
@@ -48,6 +48,136 @@
             </Setter>
         </Style>
 
+        <!-- Apple Music 风格细滑杆：3px 轨道 + 白色圆形滑块。
+             轨道视觉只有 3px，但 Slider 自身留出 14px 高的命中区，方便鼠标抓取。 -->
+        <Style x:Key="AppleSlider" TargetType="Slider">
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid VerticalAlignment="Center">
+                            <Track x:Name="PART_Track" Height="10">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Focusable="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="3" CornerRadius="1.5" Background="#F2FFFFFF"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="3" CornerRadius="1.5" Background="#3DFFFFFF"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="9" Height="9" Focusable="False">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Width="9" Height="9" Fill="White">
+                                                    <Ellipse.Effect>
+                                                        <DropShadowEffect BlurRadius="5" ShadowDepth="0" Opacity="0.4"/>
+                                                    </Ellipse.Effect>
+                                                </Ellipse>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <!-- 时长未知（直播流 / 播放器不回报时长）时整条进度不可拖，视觉上压暗 -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="PART_Track" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 展开面板的次级按钮（随机 / 循环）：22px，矢量图标随 Foreground 变色 -->
+        <Style x:Key="DetailMiniButton" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Foreground" Value="#B3FFFFFF"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="11" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1FFFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 展开面板的上一首 / 下一首：32px，SF Symbols 风格的双实心圆角三角 -->
+        <Style x:Key="DetailIconButton" TargetType="Button">
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Foreground" Value="#F5FFFFFF"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="16" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1FFFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0FFFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 展开面板的主播放键：46×34 的圆角胶囊，内部是圆角播放/暂停图标。
+             参考 iOS 灵动岛展开态的玻璃按钮：始终有一层很淡的圆角底色，悬停时提亮。 -->
+        <Style x:Key="DetailPlayStyle" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="10" Background="#1FFFFFFF">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#38FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#14FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <!-- 窗口固定为最大形态尺寸（展开态）；真正的"岛"是 CapsuleHost，弹簧只改它的宽高。
@@ -76,6 +206,12 @@
                 </ContextMenu>
             </Grid.ContextMenu>
 
+            <!-- 主题底色：纯黑 / 磨砂模式的不透明底，液态玻璃模式下保持透明由玻璃层负责 -->
+            <Border x:Name="ThemeBackdrop"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    IsHitTestVisible="False"/>
+
             <!-- 设计尺寸 = 胶囊尺寸（缩放前），ContentScale 统一放大 -->
             <Grid x:Name="ContentHost"
                   HorizontalAlignment="Center"
@@ -92,13 +228,12 @@
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
-                        <Ellipse Width="5" Height="5" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock x:Name="IdleTime"
-                                   Margin="7,0,0,0"
-                                   FontSize="11.5" FontWeight="SemiBold"
+                                   FontSize="12" FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimary}"
                                    VerticalAlignment="Center"/>
-                        <Border Width="1" Height="9" Margin="8,0"
+                        <Border x:Name="IdleClockDivider"
+                                Width="1" Height="9" Margin="8,0"
                                 Background="{StaticResource DividerBrush}"
                                 VerticalAlignment="Center"/>
                         <TextBlock x:Name="IdleHint"
@@ -106,6 +241,44 @@
                                    FontSize="10"
                                    Foreground="{StaticResource TextSecondary}"
                                    VerticalAlignment="Center"/>
+                        <Border x:Name="IdleMetricsDivider"
+                                Width="1" Height="9" Margin="8,0"
+                                Background="{StaticResource DividerBrush}"
+                                VerticalAlignment="Center"/>
+                        <!-- 固定宽度 + 等宽字体：数值跳动不会改变胶囊宽度 -->
+                        <TextBlock x:Name="IdleMetrics"
+                                   Width="108"
+                                   FontSize="9"
+                                   FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- 空闲展开态：点击待机胶囊后显示的大时钟 + 日期 + 资源占用 -->
+                <Grid x:Name="IdleDetailLayer" Width="224" Height="60" Opacity="0"
+                      VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <TextBlock x:Name="IdleDetailTime"
+                                   FontSize="21" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   VerticalAlignment="Center"/>
+                        <Border x:Name="IdleDetailDivider"
+                                Width="1" Height="28" Margin="12,0"
+                                Background="{StaticResource DividerBrush}"
+                                VerticalAlignment="Center"/>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="IdleDetailDate"
+                                       FontSize="10"
+                                       Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock x:Name="IdleDetailMetrics"
+                                       Margin="0,3,0,0"
+                                       FontSize="9.5"
+                                       FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                       Foreground="{StaticResource TextSecondary}"/>
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
 
@@ -151,80 +324,311 @@
                     </Grid>
                 </Grid>
 
-                <!-- 展开态：260×60 固定图层（大封面 + 曲目信息 + 歌词） -->
-                <Grid x:Name="DetailLayer" Width="260" Height="60" Opacity="0"
+                <!-- 展开态：仿 iOS 灵动岛展开态的播放面板（320×146）。
+                     顶部留白更多、曲目信息整体下移，底部行距收紧，视觉上更紧凑。 -->
+                <Grid x:Name="DetailLayer" Width="320" Height="146" Opacity="0"
                       VerticalAlignment="Center">
-                    <Border x:Name="DetailCover" Width="40" Height="40"
-                            HorizontalAlignment="Left" VerticalAlignment="Center" Margin="10,0,0,0"
-                            Background="#14FFFFFF">
-                        <Border.Clip>
-                            <RectangleGeometry Rect="0,0,40,40" RadiusX="13" RadiusY="13"/>
-                        </Border.Clip>
+                    <Grid Margin="12,16,12,9" VerticalAlignment="Center">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- 封面 + 标题 / 歌手 / 当前歌词 + 右侧播放律动条 -->
                         <Grid>
-                            <Image x:Name="DetailCoverImage" Stretch="UniformToFill"/>
-                            <Border x:Name="DetailCoverFallback">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                        <GradientStop Color="#4C7DFF" Offset="0"/>
-                                        <GradientStop Color="#B44CFF" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
-                                <TextBlock Text="♫" FontSize="15" Foreground="#E6FFFFFF"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border x:Name="DetailCover" Width="50" Height="50"
+                                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    Background="#14FFFFFF">
+                                <Border.Clip>
+                                    <RectangleGeometry Rect="0,0,50,50" RadiusX="13" RadiusY="13"/>
+                                </Border.Clip>
+                                <Grid>
+                                    <Image x:Name="DetailCoverImage" Stretch="UniformToFill"/>
+                                    <Border x:Name="DetailCoverFallback">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#4C7DFF" Offset="0"/>
+                                                <GradientStop Color="#B44CFF" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <TextBlock Text="♫" FontSize="17" Foreground="#E6FFFFFF"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
                             </Border>
-                        </Grid>
-                    </Border>
 
-                    <StackPanel VerticalAlignment="Center" Margin="58,0,62,0">
-                        <TextBlock x:Name="TrackLabel"
-                                   FontSize="12" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextPrimary}"
-                                   TextTrimming="CharacterEllipsis"
-                                   Margin="0,0,0,2"/>
+                            <StackPanel Grid.Column="1" Margin="11,6,4,0">
+                                <TextBlock x:Name="TrackLabel"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="ArtistLabel"
+                                           FontSize="10.5"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,1,0,0"/>
+                                <Grid x:Name="DetailLyricHost" Height="10" ClipToBounds="True"
+                                      Margin="0,1,0,0">
+                                    <TextBlock x:Name="DetailLyricA" FontSize="8.5"
+                                               Foreground="{StaticResource TextTertiary}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
+                                        <TextBlock.RenderTransform>
+                                            <TranslateTransform x:Name="DetailLyricATrans"/>
+                                        </TextBlock.RenderTransform>
+                                    </TextBlock>
+                                    <TextBlock x:Name="DetailLyricB" FontSize="8.5"
+                                               Foreground="{StaticResource TextTertiary}"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
+                                        <TextBlock.RenderTransform>
+                                            <TranslateTransform x:Name="DetailLyricBTrans"/>
+                                        </TextBlock.RenderTransform>
+                                    </TextBlock>
+                                </Grid>
+                            </StackPanel>
 
-                        <Grid x:Name="DetailLyricHost" Height="20" ClipToBounds="True">
-                            <TextBlock x:Name="DetailLyricA" FontSize="12.5"
-                                       Foreground="{StaticResource TextPrimary}"
-                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
-                                <TextBlock.RenderTransform>
-                                    <TranslateTransform x:Name="DetailLyricATrans"/>
-                                </TextBlock.RenderTransform>
-                            </TextBlock>
-                            <TextBlock x:Name="DetailLyricB" FontSize="12.5"
-                                       Foreground="{StaticResource TextPrimary}"
-                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
-                                <TextBlock.RenderTransform>
-                                    <TranslateTransform x:Name="DetailLyricBTrans"/>
-                                </TextBlock.RenderTransform>
-                            </TextBlock>
+                            <!-- 播放律动：播放时亮起，暂停时压暗（纯装饰，不参与点击） -->
+                            <Canvas x:Name="DetailWaveform" Grid.Column="2" Width="18" Height="12"
+                                    VerticalAlignment="Top" Margin="0,2,0,0" IsHitTestVisible="False">
+                                <Border Canvas.Left="0" Canvas.Top="2.5" Width="2.5" Height="7"
+                                        CornerRadius="1.25" Background="#F2FFFFFF"/>
+                                <Border Canvas.Left="5" Canvas.Top="0" Width="2.5" Height="12"
+                                        CornerRadius="1.25" Background="#99FFFFFF"/>
+                                <Border Canvas.Left="10" Canvas.Top="3.5" Width="2.5" Height="5"
+                                        CornerRadius="1.25" Background="#F2FFFFFF"/>
+                                <Border Canvas.Left="15" Canvas.Top="1.5" Width="2.5" Height="9"
+                                        CornerRadius="1.25" Background="#99FFFFFF"/>
+                            </Canvas>
                         </Grid>
+
+                        <!-- 底部区域：按灵动岛布局铺满整行。
+                             左侧时间落在封面下方，进度条从封面右缘开始，右侧为剩余时间。 -->
+                        <Grid Grid.Row="1" Margin="0,4,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="42"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="32"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="ElapsedText" Text="0:00"
+                                       FontSize="8.5" FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       VerticalAlignment="Center"/>
+
+                            <Slider x:Name="SeekSlider" Grid.Column="1"
+                                    Style="{StaticResource AppleSlider}"
+                                    Minimum="0" Maximum="1" Value="0"
+                                    IsMoveToPointEnabled="True"
+                                    VerticalAlignment="Center"
+                                    ToolTip="拖动调整播放进度"
+                                    Margin="2,0,2,0"/>
+
+                            <TextBlock x:Name="RemainingText" Grid.Column="2" Text="–:–"
+                                       FontSize="8.5" FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       TextAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <!-- 播放控制：随机 / 上一首 / 播放暂停 / 下一首 / 循环。
+                             全部用矢量 Path 绘制：双实心三角、圆角暂停条、交叉箭头，
+                             对应 SF Symbols 的 backward.fill / play.fill / shuffle / repeat。 -->
+                        <StackPanel Grid.Row="2" Orientation="Horizontal"
+                                    HorizontalAlignment="Center" Margin="0,3,0,0">
+                            <Button x:Name="ShuffleButton" Style="{StaticResource DetailMiniButton}"
+                                    ToolTip="随机播放" Click="OnToggleShuffle">
+                                <Canvas Width="16" Height="12">
+                                    <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round" Data="M 1,3 H 4.2 L 11.8,9 H 15.6"/>
+                                    <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          StrokeLineJoin="Round" Data="M 1,9 H 4.2 L 11.8,3 H 15.6"/>
+                                    <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Data="M 13.1,1.3 L 15.7,3 L 13.1,4.7 Z"/>
+                                    <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Data="M 13.1,7.3 L 15.7,9 L 13.1,10.7 Z"/>
+                                </Canvas>
+                            </Button>
+                            <Button x:Name="DetailPrevButton" Style="{StaticResource DetailIconButton}"
+                                    Margin="12,0,0,0" ToolTip="上一首" Click="OnSkipPrevious">
+                                <Canvas Width="22" Height="18">
+                                    <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="3.5"
+                                          StrokeLineJoin="Round" Data="M 9.4,2.2 L 2.1,9 L 9.4,15.8 Z"/>
+                                    <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="3.5"
+                                          StrokeLineJoin="Round" Data="M 19.6,2.2 L 13,9 L 19.6,15.8 Z"/>
+                                </Canvas>
+                            </Button>
+                            <Button x:Name="DetailPlayButton" Style="{StaticResource DetailPlayStyle}"
+                                    Margin="10,0" ToolTip="播放 / 暂停" Click="OnTogglePlay">
+                                <!-- 图标画布比图形本身留 1~2px 余量，避免任何 DPI 下被布局边界裁切 -->
+                                <Grid Width="22" Height="24">
+                                    <Path x:Name="DetailPlayGlyph" Fill="White" Stroke="White"
+                                          StrokeThickness="7" StrokeLineJoin="Round"
+                                          Data="M 3.5,3.5 L 17,11 L 3.5,18.5 Z"/>
+                                    <Grid x:Name="DetailPauseGlyph" Visibility="Collapsed">
+                                        <Rectangle Width="6" Height="20" RadiusX="2.5"
+                                                   Fill="White" HorizontalAlignment="Left" Margin="2.5,0,0,0"/>
+                                        <Rectangle Width="6" Height="20" RadiusX="2.5"
+                                                   Fill="White" HorizontalAlignment="Right" Margin="0,0,2.5,0"/>
+                                    </Grid>
+                                </Grid>
+                            </Button>
+                            <Button x:Name="DetailNextButton" Style="{StaticResource DetailIconButton}"
+                                    Margin="0,0,12,0" ToolTip="下一首" Click="OnSkipNext">
+                                <Canvas Width="22" Height="18">
+                                    <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="3.5"
+                                          StrokeLineJoin="Round" Data="M 2.4,2.2 L 9,9 L 2.4,15.8 Z"/>
+                                    <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="3.5"
+                                          StrokeLineJoin="Round" Data="M 12.6,2.2 L 19.9,9 L 12.6,15.8 Z"/>
+                                </Canvas>
+                            </Button>
+                            <Button x:Name="RepeatButton" Style="{StaticResource DetailMiniButton}"
+                                    ToolTip="循环模式" Click="OnCycleRepeat">
+                                <Grid Width="16" Height="12">
+                                    <Canvas>
+                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              StrokeLineJoin="Round" Data="M 3,7.4 V 5 A 2.5,2.5 0 0 1 5.5,2.5 H 12.4"/>
+                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              StrokeLineJoin="Round" Data="M 13,4.6 V 7 A 2.5,2.5 0 0 1 10.5,9.5 H 3.6"/>
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M 11.4,1 L 14.2,2.5 L 11.4,4 Z"/>
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M 4.6,8 L 1.8,9.5 L 4.6,11 Z"/>
+                                    </Canvas>
+                                    <!-- 单曲循环时在环内显示 1（对应 SF Symbols 的 repeat.1） -->
+                                    <TextBlock x:Name="RepeatOneBadge" Text="1"
+                                               Visibility="Collapsed"
+                                               FontSize="6.5" FontWeight="Bold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Margin="0,0.5,0,0"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                </Grid>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- 系统音量：低音量的喇叭图标 + 细滑杆，作为紧凑面板的底部一栏 -->
+                        <Grid Grid.Row="3" Margin="0,2,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Grid x:Name="VolumeGlyph" Width="16" Height="12" VerticalAlignment="Center">
+                                <Canvas x:Name="VolumeSpeaker">
+                                    <Path Fill="#A6FFFFFF" Data="M 1,4 H 4 L 7.5,1 V 11 L 4,8 H 1 Z"/>
+                                    <Path Stroke="#A6FFFFFF" StrokeThickness="1.2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Data="M 9.6,4 A 3.2,3.2 0 0 1 9.6,8"/>
+                                    <Path Stroke="#A6FFFFFF" StrokeThickness="1.1"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Data="M 11.9,2.4 A 6,6 0 0 1 11.9,9.6"/>
+                                </Canvas>
+                                <Canvas x:Name="VolumeMuted" Visibility="Collapsed">
+                                    <Path Fill="#A6FFFFFF" Data="M 1,4 H 4 L 7.5,1 V 11 L 4,8 H 1 Z"/>
+                                    <Path Stroke="#A6FFFFFF" StrokeThickness="1.2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Data="M 9.6,4.2 L 13.4,8.2"/>
+                                    <Path Stroke="#A6FFFFFF" StrokeThickness="1.2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                          Data="M 13.4,4.2 L 9.6,8.2"/>
+                                </Canvas>
+                            </Grid>
+
+                            <Slider x:Name="VolumeSlider" Grid.Column="1"
+                                    Style="{StaticResource AppleSlider}"
+                                    Minimum="0" Maximum="100" Value="60"
+                                    ToolTip="系统音量"
+                                    Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- 消息层：系统通知到达时自动展开，完整显示应用名 + 正文。
+                     正文 TextWrapping=Wrap、不做截断；尺寸由代码按文本实测后设定。 -->
+                <Grid x:Name="NotificationLayer"
+                      Width="300" Height="96"
+                      Opacity="0"
+                      IsHitTestVisible="False"
+                      VerticalAlignment="Center">
+                    <StackPanel Margin="16,12" VerticalAlignment="Center">
+                        <TextBlock x:Name="MessageApp"
+                                   FontSize="10"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <!-- 极端超长消息的兜底：内容超出可视高度时出现滚动条，绝不溢出胶囊 -->
+                        <ScrollViewer x:Name="MessageScroll"
+                                      Margin="0,4,0,0"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <TextBlock x:Name="MessageBody"
+                                       FontSize="12.5"
+                                       Foreground="{StaticResource TextPrimary}"
+                                       TextWrapping="Wrap"
+                                       LineHeight="17"
+                                       LineStackingStrategy="BlockLineHeight"/>
+                        </ScrollViewer>
                     </StackPanel>
                 </Grid>
 
-                <!-- SMTC 播放控制：独立一层，靠右对齐，随胶囊宽度自然跟随 -->
-                <StackPanel Orientation="Horizontal"
+                <!-- SMTC 播放控制：独立一层，靠右对齐，随胶囊宽度自然跟随。
+                     初始不可见：只有进入媒体态（有 SMTC 会话）后由 ApplyMorph 淡入，
+                     否则会在待机胶囊里和时间/监控文字重叠。 -->
+                <StackPanel x:Name="PlaybackControls"
+                            Orientation="Horizontal"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center"
+                            Opacity="0"
+                            IsHitTestVisible="False"
                             Margin="0,0,6,0">
                     <Button x:Name="PrevButton"
                             Style="{StaticResource CompactIconButton}"
-                            Content="⏮"
-                            FontFamily="Segoe UI Symbol"
                             ToolTip="上一首"
-                            Click="OnSkipPrevious"/>
+                            Click="OnSkipPrevious">
+                        <Canvas Width="11" Height="9">
+                            <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="1.3"
+                                  StrokeLineJoin="Round" Data="M 5.2,0.8 L 1.4,4.5 L 5.2,8.2 Z"/>
+                            <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="1.3"
+                                  StrokeLineJoin="Round" Data="M 10.2,0.8 L 6.4,4.5 L 10.2,8.2 Z"/>
+                        </Canvas>
+                    </Button>
                     <Button x:Name="PlayButton"
                             Style="{StaticResource CompactIconButton}"
-                            Content="▶"
-                            FontFamily="Segoe UI Symbol"
                             ToolTip="播放 / 暂停"
                             Margin="3,0"
-                            Click="OnTogglePlay"/>
+                            Click="OnTogglePlay">
+                        <Grid Width="9" Height="9">
+                            <!-- 不再依赖 Segoe UI Symbol / Emoji 字形：矢量图标在任意 DPI 下都完整清晰 -->
+                            <Path x:Name="CompactPlayGlyph" Fill="#F5FFFFFF"
+                                  Stroke="#F5FFFFFF" StrokeThickness="1.8" StrokeLineJoin="Round"
+                                  Data="M 1.6,0.8 L 7.6,4.5 L 1.6,8.2 Z"/>
+                            <Grid x:Name="CompactPauseGlyph" Visibility="Collapsed">
+                                <Rectangle Width="3" Height="9" RadiusX="1"
+                                           Fill="#F5FFFFFF" HorizontalAlignment="Left"/>
+                                <Rectangle Width="3" Height="9" RadiusX="1"
+                                           Fill="#F5FFFFFF" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </Grid>
+                    </Button>
                     <Button x:Name="NextButton"
                             Style="{StaticResource CompactIconButton}"
-                            Content="⏭"
-                            FontFamily="Segoe UI Symbol"
                             ToolTip="下一首"
-                            Click="OnSkipNext"/>
+                            Click="OnSkipNext">
+                        <Canvas Width="11" Height="9">
+                            <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="1.3"
+                                  StrokeLineJoin="Round" Data="M 1.4,0.8 L 5.2,4.5 L 1.4,8.2 Z"/>
+                            <Path Fill="#F5FFFFFF" Stroke="#F5FFFFFF" StrokeThickness="1.3"
+                                  StrokeLineJoin="Round" Data="M 6.4,0.8 L 10.2,4.5 L 6.4,8.2 Z"/>
+                        </Canvas>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Grid>

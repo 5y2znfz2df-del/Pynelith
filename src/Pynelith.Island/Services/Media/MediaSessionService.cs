@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Windows.Media;
 using Windows.Media.Control;
 
 namespace Pynelith.Island.Services.Media
@@ -18,8 +19,11 @@ namespace Pynelith.Island.Services.Media
     /// </summary>
     public sealed class MediaSessionService : IDisposable
     {
-        /// <summary>与播放器时间轴比对时的容差：小于该偏差视为推算更可靠。</summary>
-        private static readonly TimeSpan TimelineTolerance = TimeSpan.FromSeconds(1.5);
+        /// <summary>
+        /// 与播放器时间轴比对时的容差：超过该偏差立即校正。
+        /// 取 80ms，保证歌词行切换与音频的误差稳定在 100ms 以内。
+        /// </summary>
+        private static readonly TimeSpan TimelineTolerance = TimeSpan.FromMilliseconds(80);
 
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _session;
@@ -27,9 +31,14 @@ namespace Pynelith.Island.Services.Media
         private TimeSpan _positionBase;
         private DateTime _positionStampUtc = DateTime.UtcNow;
         private TimeSpan _lastSmtcPosition = TimeSpan.MinValue;
+        private DateTimeOffset _lastTimelineUpdated = DateTimeOffset.MinValue;
         private bool _timelineReliable;
         private bool _isPlaying;
         private bool _disposed;
+
+        // 跳转后的保护窗口：部分播放器在 Seek 完成后仍会回报旧位置，
+        // 若立即采信，进度条会先跳到目标再弹回原处。保护窗口内忽略时间轴校正。
+        private DateTime _seekGuardUntilUtc = DateTime.MinValue;
 
         /// <summary>任何状态变化（会话切换、曲目、播放状态、时间轴、封面）。</summary>
         public event EventHandler? StateChanged;
@@ -41,6 +50,12 @@ namespace Pynelith.Island.Services.Media
         public bool IsPlaying => _isPlaying;
         public TimeSpan Duration { get; private set; }
         public string SourceApp { get; private set; } = string.Empty;
+
+        /// <summary>当前播放器是否开启随机播放。</summary>
+        public bool IsShuffleActive { get; private set; }
+
+        /// <summary>当前循环模式。</summary>
+        public MediaRepeatMode RepeatMode { get; private set; }
 
         /// <summary>
         /// 当前播放位置：以最近一次时间轴快照为基线，播放中按经过的真实时间推算，
@@ -76,7 +91,18 @@ namespace Pynelith.Island.Services.Media
             {
                 Interval = TimeSpan.FromMilliseconds(400),
             };
-            _positionTimer.Tick += (_, _) => RefreshTimelineIfPlaying();
+            _positionTimer.Tick += (_, _) =>
+            {
+                // 心跳校验：部分播放器退出时既不触发 SessionsChanged，也不回报 Closed，
+                // 只能靠"会话是否还在系统列表里"来判断，否则暂停态界面会永久残留。
+                if (!IsSessionStillRegistered())
+                {
+                    Rescan();
+                    return;
+                }
+
+                RefreshTimelineIfPlaying();
+            };
         }
 
         /// <summary>请求系统全局会话管理器并开始自动扫描。</summary>
@@ -120,9 +146,25 @@ namespace Pynelith.Island.Services.Media
                 best = null;
             }
 
+            // 没有任何会话：说明播放器已退出（网易云等退出后 SMTC 会话会被系统移除），
+            // 必须主动清空曲目/封面/播放状态，否则岛会一直停在"已暂停"的媒体界面。
+            if (best == null)
+            {
+                if (_session != null)
+                {
+                    SwitchTo(null);
+                }
+                else
+                {
+                    UpdatePlaybackInfo();
+                }
+
+                return;
+            }
+
             // 同一会话不切换：WinRT 每次返回的包装对象可能不同实例，
             // 必须按 AppId 判等，否则暂停时会误走 SwitchTo 把播放位置重置为 0。
-            if (best == null || IsSameSession(best, _session))
+            if (IsSameSession(best, _session))
             {
                 UpdatePlaybackInfo();
                 return;
@@ -155,6 +197,25 @@ namespace Pynelith.Island.Services.Media
             catch (Exception)
             {
                 return false;
+            }
+        }
+
+        /// <summary>当前会话是否仍注册在系统会话列表里（播放器退出后会被移除）。</summary>
+        private bool IsSessionStillRegistered()
+        {
+            try
+            {
+                if (_manager == null || _session == null)
+                {
+                    // 管理器或会话尚未就绪时不做判断，避免误清空。
+                    return true;
+                }
+
+                return _manager.GetSessions().Any(s => IsSameSession(s, _session));
+            }
+            catch (Exception)
+            {
+                return true;
             }
         }
 
@@ -215,6 +276,8 @@ namespace Pynelith.Island.Services.Media
                 Artwork = null;
                 _isPlaying = false;
                 Duration = TimeSpan.Zero;
+                IsShuffleActive = false;
+                RepeatMode = MediaRepeatMode.None;
                 _positionBase = TimeSpan.Zero;
                 _positionStampUtc = DateTime.UtcNow;
                 Raise();
@@ -239,6 +302,10 @@ namespace Pynelith.Island.Services.Media
             _positionStampUtc = DateTime.UtcNow;
             _lastSmtcPosition = TimeSpan.MinValue;
             _timelineReliable = false;
+
+            // 新会话先清空旧的随机/循环状态，随后由 UpdatePlaybackInfo 按真实状态覆盖
+            IsShuffleActive = false;
+            RepeatMode = MediaRepeatMode.None;
 
             UpdatePlaybackInfo();
             UpdateTimeline();
@@ -375,13 +442,43 @@ namespace Pynelith.Island.Services.Media
         private void UpdatePlaybackInfo()
         {
             bool playing;
+            string status = string.Empty;
+            GlobalSystemMediaTransportControlsSessionPlaybackInfo? info = null;
             try
             {
-                playing = IsPlayingStatus(_session?.GetPlaybackInfo());
+                info = _session?.GetPlaybackInfo();
+                status = info?.PlaybackStatus.ToString() ?? string.Empty;
+                playing = IsPlayingStatus(info);
             }
             catch (Exception)
             {
                 playing = false;
+            }
+
+            try
+            {
+                if (info != null)
+                {
+                    IsShuffleActive = info.IsShuffleActive ?? false;
+                    RepeatMode = info.AutoRepeatMode switch
+                    {
+                        MediaPlaybackAutoRepeatMode.Track => MediaRepeatMode.One,
+                        MediaPlaybackAutoRepeatMode.List => MediaRepeatMode.All,
+                        _ => MediaRepeatMode.None,
+                    };
+                }
+            }
+            catch (Exception)
+            {
+                // 部分播放器不实现随机/循环状态，保持旧值。
+            }
+
+            // 播放器退出后，系统偶尔仍保留一个状态为 Closed 的会话：
+            // 这时必须按"无会话"处理，否则岛会残留上一首的封面和暂停图标。
+            if (string.Equals(status, "Closed", StringComparison.Ordinal))
+            {
+                SwitchTo(null);
+                return;
             }
 
             if (playing != _isPlaying)
@@ -406,7 +503,7 @@ namespace Pynelith.Island.Services.Media
                 var timeline = _session?.GetTimelineProperties();
                 if (timeline != null)
                 {
-                    ApplyTimeline(timeline.Position);
+                    ApplyTimeline(timeline);
                     Duration = timeline.EndTime > timeline.StartTime
                         ? timeline.EndTime - timeline.StartTime
                         : TimeSpan.Zero;
@@ -432,7 +529,7 @@ namespace Pynelith.Island.Services.Media
                 var timeline = _session.GetTimelineProperties();
                 if (timeline != null)
                 {
-                    ApplyTimeline(timeline.Position);
+                    ApplyTimeline(timeline);
                 }
             }
             catch (Exception)
@@ -442,25 +539,42 @@ namespace Pynelith.Island.Services.Media
         }
 
         /// <summary>
-        /// 采用播放器上报的时间轴位置：只在播放器确实更新了数值（换歌/拖动进度）且偏差
-        /// 超过容差时校正。部分播放器的 SMTC 时间轴长期停在起点，若无条件采用会把
-        /// 歌词一直拉回第一行，因此停滞的时间轴必须忽略。
+        /// 采用播放器上报的时间轴位置。
+        /// 关键点：<c>LastUpdatedTime</c> 是播放器采样该 Position 的时刻，
+        /// 用它把位置外推到"此刻"，即使播放器每秒才上报一次，也能得到毫秒级精度。
+        /// 位置完全没变（部分播放器时间轴长期停在 0）时一律不校正，继续用单调时钟推算。
         /// </summary>
-        private void ApplyTimeline(TimeSpan smtcPosition)
+        private void ApplyTimeline(GlobalSystemMediaTransportControlsSessionTimelineProperties timeline)
         {
-            bool changed = smtcPosition != _lastSmtcPosition;
-            bool advanced = smtcPosition > _lastSmtcPosition;
+            TimeSpan smtcPosition = timeline.Position;
+            DateTimeOffset updatedAt = timeline.LastUpdatedTime;
+
+            bool positionChanged = smtcPosition != _lastSmtcPosition;
+            bool stampChanged = updatedAt != _lastTimelineUpdated;
+
             _lastSmtcPosition = smtcPosition;
+            _lastTimelineUpdated = updatedAt;
 
             if (smtcPosition > TimeSpan.Zero)
             {
-                // 出现过非零且变化的位置，说明这个播放器确实在上报进度
+                // 出现过非零位置，说明这个播放器确实在上报进度
                 _timelineReliable = true;
             }
 
-            if (!changed)
+            // 刚提交过 Seek：播放器可能还在回报跳转前的位置，这段时间不做校正
+            if (DateTime.UtcNow < _seekGuardUntilUtc)
             {
-                // 时间轴停滞（部分播放器只给初始值）：继续用时间推算保证歌词推进
+                return;
+            }
+
+            if (!positionChanged && !stampChanged)
+            {
+                return;
+            }
+
+            if (!positionChanged)
+            {
+                // 位置没变（可能只是时间戳刷新）：不做校正，避免把推算值拉回停滞的 0
                 return;
             }
 
@@ -471,12 +585,25 @@ namespace Pynelith.Island.Services.Media
                 return;
             }
 
-            // 只在偏差明显时校正：播放器上报的时间轴常滞后 0.3~1 秒且抖动，
-            // 无条件跟随会把推算位置来回拉扯，表现为「正在唱第 2 句却显示第 1 句」。
-            // 本机推算基于单调时钟，短周期内更准；换歌/拖动进度这类大偏差才采用播放器值。
-            if ((smtcPosition - Position).Duration() > TimelineTolerance)
+            TimeSpan effective = smtcPosition;
+            if (updatedAt != DateTimeOffset.MinValue)
             {
-                _positionBase = smtcPosition;
+                TimeSpan age = DateTimeOffset.Now - updatedAt;
+                if (age > TimeSpan.Zero && age < TimeSpan.FromSeconds(5))
+                {
+                    effective += age;
+                }
+            }
+
+            if (effective < TimeSpan.Zero)
+            {
+                effective = TimeSpan.Zero;
+            }
+
+            // 偏差超过容差才校正：换歌 / 拖动进度会立刻对齐，正常播放时不会来回拉扯
+            if ((effective - Position).Duration() > TimelineTolerance)
+            {
+                _positionBase = effective;
                 _positionStampUtc = DateTime.UtcNow;
             }
         }
@@ -509,6 +636,103 @@ namespace Pynelith.Island.Services.Media
         public Task<bool> SkipNextAsync() => RunAsync(s => s.TrySkipNextAsync());
 
         public Task<bool> SkipPreviousAsync() => RunAsync(s => s.TrySkipPreviousAsync());
+
+        /// <summary>跳转到指定播放位置（进度条拖拽）。</summary>
+        public async Task<bool> SeekAsync(TimeSpan position)
+        {
+            var session = _session;
+            if (session == null || _disposed)
+            {
+                return false;
+            }
+
+            try
+            {
+                // SMTC 的位置单位是 100ns
+                long ticks = Math.Max(0, (long)(position.TotalMilliseconds * 10000.0));
+                bool ok = await session.TryChangePlaybackPositionAsync(ticks);
+                if (ok)
+                {
+                    _positionBase = position;
+                    _positionStampUtc = DateTime.UtcNow;
+                    _seekGuardUntilUtc = DateTime.UtcNow.AddMilliseconds(700);
+                    Raise();
+                }
+
+                return ok;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>切换随机播放。</summary>
+        public async Task<bool> ToggleShuffleAsync()
+        {
+            var session = _session;
+            if (session == null || _disposed)
+            {
+                return false;
+            }
+
+            try
+            {
+                bool target = !IsShuffleActive;
+                bool ok = await session.TryChangeShuffleActiveAsync(target);
+                if (ok)
+                {
+                    IsShuffleActive = target;
+                    Raise();
+                }
+
+                return ok;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>循环切换：关闭 → 列表循环 → 单曲循环。</summary>
+        public async Task<bool> CycleRepeatAsync()
+        {
+            var session = _session;
+            if (session == null || _disposed)
+            {
+                return false;
+            }
+
+            try
+            {
+                MediaRepeatMode next = RepeatMode switch
+                {
+                    MediaRepeatMode.None => MediaRepeatMode.All,
+                    MediaRepeatMode.All => MediaRepeatMode.One,
+                    _ => MediaRepeatMode.None,
+                };
+
+                MediaPlaybackAutoRepeatMode mode = next switch
+                {
+                    MediaRepeatMode.All => MediaPlaybackAutoRepeatMode.List,
+                    MediaRepeatMode.One => MediaPlaybackAutoRepeatMode.Track,
+                    _ => MediaPlaybackAutoRepeatMode.None,
+                };
+
+                bool ok = await session.TryChangeAutoRepeatModeAsync(mode);
+                if (ok)
+                {
+                    RepeatMode = next;
+                    Raise();
+                }
+
+                return ok;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         private async Task<bool> RunAsync(
             Func<GlobalSystemMediaTransportControlsSession, Windows.Foundation.IAsyncOperation<bool>> action)
@@ -580,5 +804,13 @@ namespace Pynelith.Island.Services.Media
             _session = null;
             _manager = null;
         }
+    }
+
+    /// <summary>循环模式（对应 SMTC 的 MediaPlaybackAutoRepeatMode）。</summary>
+    public enum MediaRepeatMode
+    {
+        None,
+        All,
+        One,
     }
 }
