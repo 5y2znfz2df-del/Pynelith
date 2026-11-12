@@ -212,36 +212,49 @@
                     BorderThickness="0"
                     IsHitTestVisible="False"/>
 
-            <!-- 高光层：左上柔光 + 沿边缘的镜面反光。
-                 参考 iOS 灵动岛的玻璃高光：未展开时克制，展开时更明显。
-                 放在内容之下，文字与图标不会被洗白。 -->
+            <!-- 高光层：很薄的一道镜面反光，不是整圈白边。
+                 左上最亮，沿边缘快速衰减；底部只留一点弱反光。 -->
             <Grid x:Name="CapsuleHighlight" IsHitTestVisible="False" ClipToBounds="True">
-                <!-- 左上角柔光 -->
-                <Ellipse Width="220" Height="120"
+                <!-- 极淡的左上柔光，只负责把玻璃"点亮"，不做大面积泛白 -->
+                <Ellipse Width="180" Height="90"
                          HorizontalAlignment="Left" VerticalAlignment="Top"
-                         Margin="-50,-45,0,0">
+                         Margin="-45,-45,0,0" Opacity="0.55">
                     <Ellipse.Fill>
                         <RadialGradientBrush>
-                            <GradientStop Color="#38FFFFFF" Offset="0"/>
-                            <GradientStop Color="#14FFFFFF" Offset="0.55"/>
+                            <GradientStop Color="#18FFFFFF" Offset="0"/>
+                            <GradientStop Color="#08FFFFFF" Offset="0.6"/>
                             <GradientStop Color="#00FFFFFF" Offset="1"/>
                         </RadialGradientBrush>
                     </Ellipse.Fill>
                 </Ellipse>
 
-                <!-- 镜面边缘：左上最亮，右下留一道弱反光 -->
-                <Border x:Name="HighlightRim"
-                        Margin="0.5"
-                        BorderThickness="1"
-                        CornerRadius="{Binding CornerRadius, ElementName=ThemeBackdrop}">
-                    <Border.BorderBrush>
+                <!-- 细描边：0.75px，沿胶囊轮廓绘制；渐变让高光集中在左上，右侧自然消失 -->
+                <Path x:Name="HighlightPath"
+                      StrokeThickness="0.7"
+                      StrokeLineJoin="Round"
+                      IsHitTestVisible="False">
+                    <Path.Stroke>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#B8FFFFFF" Offset="0"/>
-                            <GradientStop Color="#24FFFFFF" Offset="0.38"/>
-                            <GradientStop Color="#0FFFFFFF" Offset="0.72"/>
-                            <GradientStop Color="#5CFFFFFF" Offset="1"/>
+                            <GradientStop Color="#CCFFFFFF" Offset="0"/>
+                            <GradientStop Color="#59FFFFFF" Offset="0.2"/>
+                            <GradientStop Color="#0FFFFFFF" Offset="0.5"/>
+                            <GradientStop Color="#00FFFFFF" Offset="0.78"/>
+                            <GradientStop Color="#1FFFFFFF" Offset="1"/>
                         </LinearGradientBrush>
-                    </Border.BorderBrush>
+                    </Path.Stroke>
+                </Path>
+
+                <!-- 顶部镜面线：只在平直的上边缘，不拐进左右圆角；两端淡出，避免再次变成"白圈" -->
+                <Border Height="0.75" VerticalAlignment="Top"
+                        Margin="16,0.75,16,0" Opacity="0.8">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                            <GradientStop Color="#00FFFFFF" Offset="0"/>
+                            <GradientStop Color="#B8FFFFFF" Offset="0.18"/>
+                            <GradientStop Color="#66FFFFFF" Offset="0.58"/>
+                            <GradientStop Color="#00FFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
                 </Border>
             </Grid>
 

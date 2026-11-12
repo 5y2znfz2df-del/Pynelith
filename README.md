@@ -116,7 +116,7 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 双击 → UAC 允许 → 选择安装位置 → 安装。
 
 安装器会释放程序、创建桌面与开始菜单快捷方式、注册卸载信息与登录自启，
-完成后自动启动灵动岛。安装包约 **6.4MB**（程序载荷压缩内嵌）。
+完成后自动启动灵动岛。安装包约 **6.8MB**（程序载荷压缩内嵌）。
 **目标机器需要安装 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)**，
 否则双击时会由系统提示下载。
 
@@ -215,7 +215,7 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 窗口 | 无边框分层窗口、`WM_WINDOWPOSCHANGING` 拦截、`SetWindowPos` 置顶守护 |
 | 字体 | 系统字体栈：PingFang SC → Microsoft YaHei UI → Segoe UI；不内置第三方字体 |
 | 配置 | `System.Text.Json`，单实例 + 防抖落盘 |
-| 安装器 | WinForms 自研：`requireAdministrator`、文件夹选择、zip 压缩内嵌载荷（约 6.4MB） |
+| 安装器 | WinForms 自研：`requireAdministrator`、文件夹选择、zip 压缩内嵌载荷（约 6.8MB） |
 
 ## 项目结构
 

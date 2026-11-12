@@ -58,6 +58,7 @@ namespace Pynelith.Island.Views
         private readonly DispatcherTimer _topmostTimer;
         private readonly DispatcherTimer _springTimer;
         private readonly RectangleGeometry _capsuleClip = new RectangleGeometry();
+        private readonly RectangleGeometry _highlightGeometry = new RectangleGeometry();
 
         // 玻璃层按主题动态安装/卸载：纯黑、磨砂主题下不运行抓屏，省下全部采样开销
         private LiquidGlassSurface? _glass;
@@ -160,6 +161,7 @@ namespace Pynelith.Island.Views
             InitializeComponent();
 
             CapsuleHost.Clip = _capsuleClip;
+            HighlightPath.Data = _highlightGeometry;
 
             // ---- 主题：液态玻璃才安装玻璃层；纯黑/磨砂用静态底色，零抓屏开销 ----
             ApplyTheme();
@@ -927,8 +929,15 @@ namespace Pynelith.Island.Views
             // 比"矩形填充 + 父级裁剪"边缘更干净、更接近灵动岛的胶囊感。
             ThemeBackdrop.CornerRadius = new CornerRadius(radius);
 
-            // 高光强度：未展开（紧凑）时克制，展开后增强，形成参考图的玻璃反光
-            CapsuleHighlight.Opacity = 0.6 + 0.4 * Math.Clamp(_d, 0, 1);
+            // 高光：沿胶囊轮廓画一条 0.75px 的细边，而不是整圈白描边。
+            // 收缩 0.5px 让描边完整落在裁剪区内，避免被裁掉一半。
+            _highlightGeometry.Rect = new Rect(0.5, 0.5,
+                Math.Max(0, width - 1), Math.Max(0, height - 1));
+            _highlightGeometry.RadiusX = Math.Max(0, radius - 0.5);
+            _highlightGeometry.RadiusY = Math.Max(0, radius - 0.5);
+
+            // 未展开时更克制，展开后略微增强
+            CapsuleHighlight.Opacity = 0.7 + 0.3 * Math.Clamp(_d, 0, 1);
 
             // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
             double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
