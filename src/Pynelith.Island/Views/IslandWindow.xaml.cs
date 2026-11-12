@@ -927,6 +927,9 @@ namespace Pynelith.Island.Views
             // 比"矩形填充 + 父级裁剪"边缘更干净、更接近灵动岛的胶囊感。
             ThemeBackdrop.CornerRadius = new CornerRadius(radius);
 
+            // 高光强度：未展开（紧凑）时克制，展开后增强，形成参考图的玻璃反光
+            CapsuleHighlight.Opacity = 0.6 + 0.4 * Math.Clamp(_d, 0, 1);
+
             // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
             double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
             double idleDetailAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp((d - 0.15) / 0.85, 0, 1);

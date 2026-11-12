@@ -23,12 +23,7 @@
     <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- 苹方 SC 子集（GB2312 + 拉丁字符，常规/粗体两个字重）：
-         作为 WPF 资源嵌入，pack URI 引用，无需用户额外安装字体。
-         原始 TTF 每份约 11MB，子集后约 2.3MB，避免安装包体积失控。 -->
-    <Resource Include="Fonts\PingFangSC-Regular.ttf" />
-    <Resource Include="Fonts\PingFangSC-Bold.ttf" />
-  </ItemGroup>
+  <!-- 字体：不内置第三方字体。XAML 使用系统字体栈
+       PingFang SC → Microsoft YaHei UI → Segoe UI，仓库与安装包都不再携带苹方文件。 -->
 
 </Project>

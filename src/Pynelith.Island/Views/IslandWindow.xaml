@@ -12,7 +12,7 @@
         Topmost="True"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
-        FontFamily="pack://application:,,,/Pynelith.Island;component/Fonts/#PingFang SC">
+        FontFamily="PingFang SC, Microsoft YaHei UI, Segoe UI">
 
     <Window.Resources>
         <SolidColorBrush x:Key="TextPrimary" Color="#F5FFFFFF"/>
@@ -211,6 +211,39 @@
                     Background="Transparent"
                     BorderThickness="0"
                     IsHitTestVisible="False"/>
+
+            <!-- 高光层：左上柔光 + 沿边缘的镜面反光。
+                 参考 iOS 灵动岛的玻璃高光：未展开时克制，展开时更明显。
+                 放在内容之下，文字与图标不会被洗白。 -->
+            <Grid x:Name="CapsuleHighlight" IsHitTestVisible="False" ClipToBounds="True">
+                <!-- 左上角柔光 -->
+                <Ellipse Width="220" Height="120"
+                         HorizontalAlignment="Left" VerticalAlignment="Top"
+                         Margin="-50,-45,0,0">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush>
+                            <GradientStop Color="#38FFFFFF" Offset="0"/>
+                            <GradientStop Color="#14FFFFFF" Offset="0.55"/>
+                            <GradientStop Color="#00FFFFFF" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+
+                <!-- 镜面边缘：左上最亮，右下留一道弱反光 -->
+                <Border x:Name="HighlightRim"
+                        Margin="0.5"
+                        BorderThickness="1"
+                        CornerRadius="{Binding CornerRadius, ElementName=ThemeBackdrop}">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#B8FFFFFF" Offset="0"/>
+                            <GradientStop Color="#24FFFFFF" Offset="0.38"/>
+                            <GradientStop Color="#0FFFFFFF" Offset="0.72"/>
+                            <GradientStop Color="#5CFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
+                </Border>
+            </Grid>
 
             <!-- 设计尺寸 = 胶囊尺寸（缩放前），ContentScale 统一放大 -->
             <Grid x:Name="ContentHost"

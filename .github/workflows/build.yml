@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 安装器会把 Island 的发布产物压进载荷；先显式 publish 一次，构建更稳定
+      - name: Publish island payload
+        run: >
+          dotnet publish src/Pynelith.Island/Pynelith.Island.csproj
+          -c Release -r win-x64 --self-contained false
+
+      - name: Build solution
+        run: dotnet build Pynelith.sln -c Release

@@ -34,6 +34,12 @@
 
   <!-- 构建时把 25MB 的程序 exe 压成约 6.5MB 的 zip 再嵌入，安装时解压写出 -->
   <Target Name="PackIslandPayload" BeforeTargets="PrepareForBuild">
+    <!-- 干净的 clone 直接 dotnet build 时，载荷还不存在：先自动发布一次 Island。
+         已存在时（本地或 CI 预先 publish）直接复用，避免重复构建。 -->
+    <Exec Condition="!Exists('$(IslandPayload)')"
+          Command="dotnet publish &quot;$(MSBuildProjectDirectory)\..\Pynelith.Island\Pynelith.Island.csproj&quot; -c Release -r win-x64 --self-contained false"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+
     <Error Condition="!Exists('$(IslandPayload)')"
            Text="缺少程序载荷：请先发布 Pynelith.Island（框架依赖、win-x64）。" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(IslandPayload)' -DestinationPath '$(IslandPayloadZip)' -Force&quot;" />

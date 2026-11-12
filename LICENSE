@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 FBOJ
+Copyright (c) 2026 FBOJ and Pynelith contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Third-party notices
+
+This project does **not** include or redistribute any Apple font files.
+"PingFang" and "PingFang SC" are trademarks of Apple Inc. If you install a
+PingFang font on your system for use with this application, you are responsible
+for obtaining a valid license from Apple. Font packages mirrored on third-party
+websites or code-hosting services do not grant such a license.
+
+Design inspiration: Apple Human Interface Guidelines, iOS Dynamic Island, and the
+macOS window traffic lights. Pynelith is an independent project and is not
+affiliated with or endorsed by Apple Inc.
+
+Built with .NET 8 / WPF and public Windows APIs (System Media Transport Controls,
+WASAPI). Pynelith.Glass is part of this repository and is licensed under the same
+MIT terms.
+
