@@ -24,11 +24,13 @@ SOFTWARE.
 
 ## Third-party notices
 
-This project does **not** include or redistribute any Apple font files.
-"PingFang" and "PingFang SC" are trademarks of Apple Inc. If you install a
-PingFang font on your system for use with this application, you are responsible
-for obtaining a valid license from Apple. Font packages mirrored on third-party
-websites or code-hosting services do not grant such a license.
+This project includes subset files of the PingFang SC typeface
+(`src/Pynelith.Island/Fonts/PingFangSC-Regular.ttf` and `PingFangSC-Bold.ttf`).
+"PingFang" and "PingFang SC" are trademarks of Apple Inc. The bundled subsets are
+included based on the project owner's representation that distribution has been
+authorized. The font files are **not** covered by the MIT license above. If you
+redistribute this project or its installer, you are responsible for confirming that
+your use complies with the applicable font license.
 
 Design inspiration: Apple Human Interface Guidelines, iOS Dynamic Island, and the
 macOS window traffic lights. Pynelith is an independent project and is not

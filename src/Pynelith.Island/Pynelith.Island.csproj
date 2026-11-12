@@ -23,7 +23,12 @@
     <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
   </ItemGroup>
 
-  <!-- 字体：不内置第三方字体。XAML 使用系统字体栈
-       PingFang SC → Microsoft YaHei UI → Segoe UI，仓库与安装包都不再携带苹方文件。 -->
+  <!-- 字体：苹方 SC 子集（GB2312 + 拉丁，正文中黑 / 标题粗体）。
+       作为 WPF 资源嵌入，pack URI 引用，用户无需额外安装。
+       苹方是 Apple Inc. 的授权字体；分发授权由项目维护者提供，详见 README / LICENSE。 -->
+  <ItemGroup>
+    <Resource Include="Fonts\PingFangSC-Regular.ttf" />
+    <Resource Include="Fonts\PingFangSC-Bold.ttf" />
+  </ItemGroup>
 
 </Project>

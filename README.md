@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.1.3-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.1.4-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -56,7 +56,7 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 **外观**
 - 三套主题：液态玻璃 / 纯黑 / 磨砂
 - 真液态玻璃：清晰背景 + 边缘折射 + 色散
-- 字体优先使用系统已安装的苹方 SC，未安装时回退微软雅黑（不内置第三方字体）
+- 内置苹方 SC 子集（正文中黑 / 标题粗体），无需安装
 - 灵动岛高光：左上柔光 + 镜面边缘反光，展开时增强
 - 圆角随尺寸自适应，封面按真实圆角裁剪
 - 深色 / 浅色双套图标与配色
@@ -116,12 +116,12 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 双击 → UAC 允许 → 选择安装位置 → 安装。
 
 安装器会释放程序、创建桌面与开始菜单快捷方式、注册卸载信息与登录自启，
-完成后自动启动灵动岛。安装包约 **6.8MB**（程序载荷压缩内嵌）。
+完成后自动启动灵动岛。安装包约 **9.8MB**（程序载荷 + 嵌入字体压缩内嵌）。
 **目标机器需要安装 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)**，
 否则双击时会由系统提示下载。
 
-> 安装包与仓库都**不附带** Apple 苹方字体。界面优先使用系统已安装的 PingFang SC，
-> 未安装时回退到微软雅黑；请自行取得字体授权后在本机安装。
+> 安装包内置苹方 SC 子集。PingFang 是 Apple Inc. 的商标与授权字体；
+> 本项目依据维护者提供的授权声明分发，若你要再分发请自行确认授权范围。
 
 ### 方式二：从源码构建
 
@@ -213,9 +213,9 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 系统监控 | Win32 `GetSystemTimes` + `GlobalMemoryStatusEx`，1 秒采样，零额外依赖 |
 | 动画 | `DispatcherTimer` 驱动的阻尼弹簧 + 固定子步长积分 |
 | 窗口 | 无边框分层窗口、`WM_WINDOWPOSCHANGING` 拦截、`SetWindowPos` 置顶守护 |
-| 字体 | 系统字体栈：PingFang SC → Microsoft YaHei UI → Segoe UI；不内置第三方字体 |
+| 字体 | 苹方 SC 子集（中黑 / 粗体）作为 WPF 资源嵌入，pack URI 引用 |
 | 配置 | `System.Text.Json`，单实例 + 防抖落盘 |
-| 安装器 | WinForms 自研：`requireAdministrator`、文件夹选择、zip 压缩内嵌载荷（约 6.8MB） |
+| 安装器 | WinForms 自研：`requireAdministrator`、文件夹选择、zip 压缩内嵌载荷（约 9.8MB） |
 
 ## 项目结构
 
@@ -305,9 +305,8 @@ CI 会在每次 push / PR 上执行 `dotnet build`，提交前也建议本地跑
 ## 版权与致谢
 
 - **代码**：[MIT](LICENSE) © 2026 FBOJ 与 Pynelith 贡献者。
-- **字体**：仓库与安装包不包含 Apple 苹方（PingFang SC）。界面优先读取系统已安装的苹方，
-  否则回退微软雅黑。苹方是 Apple Inc. 的商标与授权字体，请通过正规渠道取得授权后在本机安装；
-  第三方网盘或代码托管站转载的字体包不构成 Apple 授权，请勿据此再分发。
+- **字体**：内置苹方 SC 子集（`src/Pynelith.Island/Fonts/`）。PingFang 是 Apple Inc. 的商标与授权字体，
+  本项目依据维护者提供的授权声明分发；如需再分发或商用，请自行确认授权范围。
 - **设计灵感**：Apple Human Interface Guidelines、iOS 灵动岛、macOS 交通灯窗口。
 - **技术**：.NET 8 / WPF、Windows SMTC、WASAPI、Pynelith.Glass。
 - **同类项目研究**：Xiaoyu-Windows-DynamicIsland、eIsland、winfinger-windows-island、

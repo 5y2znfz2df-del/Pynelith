@@ -47,9 +47,9 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 
 ## 字体与第三方资源
 
-- **不要**把苹方（PingFang）或其他 Apple 字体文件提交到仓库或打进安装包。
-- 界面使用系统字体栈：`PingFang SC → Microsoft YaHei UI → Segoe UI`。
-- 如确需引入新字体，请使用可再分发的开源字体（如 OFL 许可），并在 PR 中附上许可证文本。
+- 项目当前内置苹方 SC 子集（`src/Pynelith.Island/Fonts/`），由维护者提供分发授权声明。
+- 新增其他字体请使用可再分发的开源字体（如 OFL 许可），并在 PR 中附上许可证文本。
+- 不要提交来源不明的字体包或安装包。
 
 ## 报告问题
 
