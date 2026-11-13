@@ -3,6 +3,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
+    <!-- 系统托盘常驻：NotifyIcon / ContextMenuStrip 来自 WinForms。
+         app.manifest 里的 PerMonitorV2 同时服务 WPF，因此保留并关闭 WinForms 的重复提示。 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <!-- 需要 WinRT 投影（UserNotificationListener 接管系统通知） -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <RootNamespace>Pynelith.Island</RootNamespace>
@@ -29,6 +33,13 @@
   <ItemGroup>
     <Resource Include="Fonts\PingFangSC-Regular.ttf" />
     <Resource Include="Fonts\PingFangSC-Bold.ttf" />
+  </ItemGroup>
+
+  <!-- 托盘图标：与 exe 图标同一份 ICO，按托盘小图标尺寸（16/24/32）挑选帧 -->
+  <ItemGroup>
+    <Resource Include="..\..\assets\icon\pynelith.ico">
+      <Link>Assets\pynelith.ico</Link>
+    </Resource>
   </ItemGroup>
 
 </Project>

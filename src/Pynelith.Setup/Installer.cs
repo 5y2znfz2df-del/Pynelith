@@ -14,7 +14,7 @@ namespace Pynelith.Setup
     internal static class Installer
     {
         internal const string ProductName = "Pynelith";
-        internal const string VersionText = "beta0.1.7";
+        internal const string VersionText = "beta0.1.8";
         internal const string AppExeName = "Pynelith.Island.exe";
         internal const string UninstallExeName = "uninstall.exe";
         // 载荷是压缩后的 zip（内含 Pynelith.Island.exe），把安装包从 ~150MB 压到 10MB 以内
@@ -72,7 +72,29 @@ namespace Pynelith.Setup
             progress.Report((94, "正在准备卸载程序…"));
             CopyUninstaller(installDir);
 
+            // 覆盖安装时 exe 路径不变，Windows 会继续用旧的图标缓存；
+            // 通知 shell 刷新一次，桌面/开始菜单快捷方式立刻换成新图标。
+            RefreshShellIcons();
+
             progress.Report((100, "安装完成"));
+        }
+
+        private const int SHCNE_ASSOCCHANGED = 0x08000000;
+        private const uint SHCNF_IDLIST = 0x0000;
+
+        [DllImport("shell32.dll")]
+        private static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
+
+        private static void RefreshShellIcons()
+        {
+            try
+            {
+                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch (Exception)
+            {
+                // 刷新失败只影响图标显示延迟，不影响安装结果。
+            }
         }
 
         /// <summary>

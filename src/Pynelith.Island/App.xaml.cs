@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Windows;
 using Pynelith.Island.Configuration;
+using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
 using Pynelith.Island.Views;
@@ -18,6 +19,7 @@ namespace Pynelith.Island
 
         private ConfigService? _configService;
         private MediaSessionService? _media;
+        private TrayService? _tray;
         private Mutex? _instanceMutex;
         private bool _ownsMutex;
 
@@ -60,6 +62,9 @@ namespace Pynelith.Island
             MainWindow = island;
             island.Show();
 
+            // 托盘常驻：岛没有标题栏，托盘是稳定的设置/退出入口。
+            _tray = new TrayService(island.ShowSettingsFromTray, island.ExitFromTray);
+
             _ = _media.InitializeAsync();
         }
 
@@ -90,6 +95,9 @@ namespace Pynelith.Island
 
         protected override void OnExit(ExitEventArgs e)
         {
+            _tray?.Dispose();
+            _tray = null;
+
             _media?.Dispose();
             _configService?.Dispose();
 

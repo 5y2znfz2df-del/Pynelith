@@ -1312,6 +1312,12 @@ namespace Pynelith.Island.Views
             Application.Current.Shutdown();
         }
 
+        /// <summary>托盘入口：打开设置（复用右键菜单逻辑，已打开时前置）。</summary>
+        internal void ShowSettingsFromTray() => OnOpenSettings(this, new RoutedEventArgs());
+
+        /// <summary>托盘入口：退出程序。</summary>
+        internal void ExitFromTray() => Application.Current.Shutdown();
+
         #endregion
 
         #region 媒体状态与歌词
