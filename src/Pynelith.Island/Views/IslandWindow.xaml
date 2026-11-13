@@ -258,40 +258,40 @@
                     </Ellipse.Fill>
                 </Ellipse>
 
-                <!-- 弧形光晕：粗而淡、带模糊，只在顶部约 1/3 高度可见 -->
+                <!-- 弧形光晕：窄而淡、带模糊，只在顶部一小段可见 -->
                 <Path x:Name="TopArcPath"
-                      StrokeThickness="2.2"
+                      StrokeThickness="1.8"
                       StrokeLineJoin="Round"
-                      Opacity="0.32"
+                      Opacity="0.30"
                       IsHitTestVisible="False">
                     <Path.Effect>
-                        <BlurEffect Radius="3.6" KernelType="Gaussian"/>
+                        <BlurEffect Radius="3.2" KernelType="Gaussian"/>
                     </Path.Effect>
                     <Path.Stroke>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#5CFFFFFF" Offset="0"/>
-                            <GradientStop Color="#16FFFFFF" Offset="0.16"/>
-                            <GradientStop Color="#00FFFFFF" Offset="0.4"/>
+                            <GradientStop Color="#66FFFFFF" Offset="0"/>
+                            <GradientStop Color="#14FFFFFF" Offset="0.14"/>
+                            <GradientStop Color="#00FFFFFF" Offset="0.32"/>
                         </LinearGradientBrush>
                     </Path.Stroke>
                 </Path>
 
-                <!-- 细弧线：0.8px、低透明度、轻微模糊，左上到上中最亮 -->
+                <!-- 细弧线：0.6px、低透明度、轻微模糊，只给左上角一条很窄的亮边 -->
                 <Path x:Name="HighlightPath"
-                      StrokeThickness="0.8"
+                      StrokeThickness="0.6"
                       StrokeLineJoin="Round"
-                      Opacity="0.42"
+                      Opacity="0.34"
                       IsHitTestVisible="False">
                     <Path.Effect>
-                        <BlurEffect Radius="1.2" KernelType="Gaussian"/>
+                        <BlurEffect Radius="0.9" KernelType="Gaussian"/>
                     </Path.Effect>
                     <Path.Stroke>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#70FFFFFF" Offset="0"/>
-                            <GradientStop Color="#1CFFFFFF" Offset="0.25"/>
-                            <GradientStop Color="#00FFFFFF" Offset="0.55"/>
-                            <GradientStop Color="#00FFFFFF" Offset="0.82"/>
-                            <GradientStop Color="#18FFFFFF" Offset="1"/>
+                            <GradientStop Color="#6AFFFFFF" Offset="0"/>
+                            <GradientStop Color="#16FFFFFF" Offset="0.18"/>
+                            <GradientStop Color="#00FFFFFF" Offset="0.5"/>
+                            <GradientStop Color="#00FFFFFF" Offset="0.86"/>
+                            <GradientStop Color="#12FFFFFF" Offset="1"/>
                         </LinearGradientBrush>
                     </Path.Stroke>
                 </Path>

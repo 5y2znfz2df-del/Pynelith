@@ -100,16 +100,18 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float4 tint = lerp(TintTop, TintBottom, gy);
     glass = lerp(glass, tint.rgb, Optics.z);
 
-    // 边缘镜面高光：只出现在被掰弯的边缘带
+    // 边缘镜面高光：只贴着边缘的一道很窄的光斑（四次方衰减，约 2–3px）
     float2 lightDir = float2(cos(Optics.y), sin(Optics.y));
     float edge = 1.0 - band;
-    float spec = pow(max(dot(g, lightDir), 0.0), 6.0) * edge * edge;
-    glass += spec * 0.85;
+    float spec = pow(max(dot(g, lightDir), 0.0), 14.0) * pow(edge, 4.0);
+    glass += spec * 0.45;
 
-    // 轮廓：先压暗一道（白底上才看得见），再叠高光
-    float rim = 1.0 - smoothstep(0.0, 1.8, inward);
-    glass *= 1.0 - rim * 0.22;
-    glass += rim * 0.25;
+    // 轮廓：只保留 1.2px 的细边，顶部最亮、腰身与底部几乎消失；
+    // 先压暗一道（白底上才看得见），再按方位叠高光。
+    float rim = 1.0 - smoothstep(0.0, 1.2, inward);
+    float topness = pow(saturate(0.5 - g.y * 0.5), 2.2);
+    glass *= 1.0 - rim * 0.10;
+    glass += rim * (0.02 + 0.16 * topness);
 
     float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
     return float4(glass * alpha, alpha);

@@ -6,7 +6,7 @@
     <Deterministic>true</Deterministic>
     <Company>Pynelith</Company>
     <Product>Pynelith</Product>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <!-- 纯 Win32/DWM 渲染通道，无需 WinRT 投影，零 NuGet 依赖 -->
     <TargetFramework>net8.0-windows</TargetFramework>
   </PropertyGroup>

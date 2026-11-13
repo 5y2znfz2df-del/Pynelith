@@ -514,7 +514,7 @@ namespace Pynelith.Island.Views
 
         private LiquidGlassSurface InstallGlass()
         {
-            return LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
+            var glass = LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
             {
                 CornerRadius = Config.CornerRadius,
                 // 更窄的折射带、更低的色散：轻微折射，不做金属镜面
@@ -532,6 +532,11 @@ namespace Pynelith.Island.Views
                 // 24fps 采样肉眼无差别，抓屏面积也一并收窄，给形变动画腾出 CPU。
                 FramesPerSecond = 24,
             });
+
+            // 光源固定在正上方：镜面高光落在上缘，形成一条窄弧，
+            // 而不是默认光源方位（右缘）那条横向硬光斑。
+            glass.Update(effect => effect.LightAngle = -Math.PI / 2);
+            return glass;
         }
 
         /// <summary>按配置启停监控采样：关闭后不再有任何定时读取，主线程零负担。</summary>
