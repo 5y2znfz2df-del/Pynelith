@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.1.4-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.1.5-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -57,7 +57,7 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 - 三套主题：液态玻璃 / 纯黑 / 磨砂
 - 真液态玻璃：清晰背景 + 边缘折射 + 色散
 - 内置苹方 SC 子集（正文中黑 / 标题粗体），无需安装
-- 灵动岛高光：左上柔光 + 镜面边缘反光，展开时增强
+- 灵动岛高光：顶部窄弧反光 + 上缘渐变描边，腰身不描边、无整圈白边
 - 圆角随尺寸自适应，封面按真实圆角裁剪
 - 深色 / 浅色双套图标与配色
 - 贴顶居中停靠，支持拖动改位置

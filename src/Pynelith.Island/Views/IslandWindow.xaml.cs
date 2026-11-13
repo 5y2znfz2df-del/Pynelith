@@ -59,6 +59,7 @@ namespace Pynelith.Island.Views
         private readonly DispatcherTimer _springTimer;
         private readonly RectangleGeometry _capsuleClip = new RectangleGeometry();
         private readonly RectangleGeometry _highlightGeometry = new RectangleGeometry();
+        private readonly RectangleGeometry _topArcGeometry = new RectangleGeometry();
 
         // 玻璃层按主题动态安装/卸载：纯黑、磨砂主题下不运行抓屏，省下全部采样开销
         private LiquidGlassSurface? _glass;
@@ -162,6 +163,7 @@ namespace Pynelith.Island.Views
 
             CapsuleHost.Clip = _capsuleClip;
             HighlightPath.Data = _highlightGeometry;
+            TopArcPath.Data = _topArcGeometry;
 
             // ---- 主题：液态玻璃才安装玻璃层；纯黑/磨砂用静态底色，零抓屏开销 ----
             ApplyTheme();
@@ -449,23 +451,39 @@ namespace Pynelith.Island.Views
 
                 if (string.Equals(_appliedTheme, ThemeStyles.PureBlack, StringComparison.Ordinal))
                 {
-                    // 纯黑：完全不透明，零抓屏开销，适合 OLED / 低配机器。
-                    // 顶部到中部做极轻微的亮度渐变，让胶囊的弧面在纯黑里也能看出体积。
-                    ThemeBackdrop.Background = new LinearGradientBrush(
-                        (Color)ColorConverter.ConvertFromString("#050506"),
-                        (Color)ColorConverter.ConvertFromString("#000000"),
-                        new Point(0, 0),
-                        new Point(0, 1));
-                    ThemeBackdrop.BorderBrush = new SolidColorBrush(Color.FromArgb(0x3D, 0xFF, 0xFF, 0xFF));
+                    // 纯黑：不透明，零抓屏开销；用很轻的纵向渐变让弧面在纯黑里也有体积感
+                    ThemeBackdrop.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Point(0, 0),
+                        EndPoint = new Point(0, 1),
+                        GradientStops =
+                        {
+                            new GradientStop(Color.FromRgb(0x15, 0x18, 0x1E), 0.0),
+                            new GradientStop(Color.FromRgb(0x0A, 0x0C, 0x10), 0.45),
+                            new GradientStop(Color.FromRgb(0x04, 0x05, 0x07), 1.0),
+                        },
+                    };
+                    // 描边不是均匀白圈：上缘亮、腰身消失、底缘只留一线环境反光
+                    ThemeBackdrop.BorderBrush = RimBrush(0x1A, 0x05, 0x0D);
                 }
                 else
                 {
-                    // 磨砂（以及液态玻璃 + 兼容模式）：半透明深灰 + 柔和高光，不抓屏也能与桌面分层
-                    ThemeBackdrop.Background = new SolidColorBrush(Color.FromArgb(0xE6, 0x16, 0x18, 0x1D));
-                    ThemeBackdrop.BorderBrush = new SolidColorBrush(Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF));
+                    // 磨砂（以及液态玻璃 + 兼容模式）：深黑灰半透明 + 柔和纵向渐变
+                    ThemeBackdrop.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Point(0, 0),
+                        EndPoint = new Point(0, 1),
+                        GradientStops =
+                        {
+                            new GradientStop(Color.FromArgb(0xDC, 0x23, 0x26, 0x2C), 0.0),
+                            new GradientStop(Color.FromArgb(0xE8, 0x12, 0x14, 0x18), 0.5),
+                            new GradientStop(Color.FromArgb(0xF0, 0x07, 0x08, 0x0A), 1.0),
+                        },
+                    };
+                    ThemeBackdrop.BorderBrush = RimBrush(0x1E, 0x06, 0x10);
                 }
 
-                ThemeBackdrop.BorderThickness = new Thickness(1);
+                ThemeBackdrop.BorderThickness = new Thickness(0.75);
             }
 
             // 玻璃层重建后强制下一帧把形状参数推过去
@@ -475,20 +493,41 @@ namespace Pynelith.Island.Views
             ApplyMorph(_p);
         }
 
+        /// <summary>
+        /// 玻璃外框的描边：上缘是主反光，腰身完全消失，底缘只留极淡的环境反光。
+        /// 用纵向渐变代替均匀白圈，避免一圈等亮的"塑料贴纸边"。
+        /// </summary>
+        private static Brush RimBrush(byte top, byte waist, byte bottom)
+        {
+            var brush = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+            };
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb(top, 0xFF, 0xFF, 0xFF), 0.0));
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb(waist, 0xFF, 0xFF, 0xFF), 0.22));
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 0.44));
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF), 0.78));
+            brush.GradientStops.Add(new GradientStop(Color.FromArgb(bottom, 0xFF, 0xFF, 0xFF), 1.0));
+            return brush;
+        }
+
         private LiquidGlassSurface InstallGlass()
         {
             return LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
             {
                 CornerRadius = Config.CornerRadius,
-                BezelWidth = 22,
-                Thickness = 28,
-                GlassIor = 1.42,
-                Dispersion = 0.05,
+                // 更窄的折射带、更低的色散：轻微折射，不做金属镜面
+                BezelWidth = 18,
+                Thickness = 30,
+                GlassIor = 1.45,
+                Dispersion = 0.02,
                 TintAmount = Config.GlassBlurStrength,
-                TintTop = Color.FromRgb(6, 8, 11),
-                TintBottom = Color.FromRgb(20, 24, 32),
+                TintTop = Color.FromRgb(10, 11, 14),
+                TintBottom = Color.FromRgb(27, 31, 38),
                 CaptureMargin = 50,
-                LightFollowsCursor = true,
+                // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
+                LightFollowsCursor = false,
                 // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
                 // 24fps 采样肉眼无差别，抓屏面积也一并收窄，给形变动画腾出 CPU。
                 FramesPerSecond = 24,
@@ -929,15 +968,20 @@ namespace Pynelith.Island.Views
             // 比"矩形填充 + 父级裁剪"边缘更干净、更接近灵动岛的胶囊感。
             ThemeBackdrop.CornerRadius = new CornerRadius(radius);
 
-            // 高光：沿胶囊轮廓画一条 0.75px 的细边，而不是整圈白描边。
+            // 高光：沿胶囊轮廓画柔和弧线，而不是整圈白描边。
             // 收缩 0.5px 让描边完整落在裁剪区内，避免被裁掉一半。
-            _highlightGeometry.Rect = new Rect(0.5, 0.5,
+            var highlightRect = new Rect(0.5, 0.5,
                 Math.Max(0, width - 1), Math.Max(0, height - 1));
+            _highlightGeometry.Rect = highlightRect;
             _highlightGeometry.RadiusX = Math.Max(0, radius - 0.5);
             _highlightGeometry.RadiusY = Math.Max(0, radius - 0.5);
+            _topArcGeometry.Rect = highlightRect;
+            _topArcGeometry.RadiusX = Math.Max(0, radius - 0.5);
+            _topArcGeometry.RadiusY = Math.Max(0, radius - 0.5);
 
             // 未展开时更克制，展开后略微增强
-            CapsuleHighlight.Opacity = 0.7 + 0.3 * Math.Clamp(_d, 0, 1);
+            CapsuleSheen.Opacity = 0.45 + 0.55 * Math.Clamp(_d, 0, 1);
+            CapsuleHighlight.Opacity = 0.5 + 0.5 * Math.Clamp(_d, 0, 1);
 
             // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
             double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
