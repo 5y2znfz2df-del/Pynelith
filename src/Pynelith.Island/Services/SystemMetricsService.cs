@@ -28,6 +28,12 @@ namespace Pynelith.Island.Services
         /// <summary>物理内存占用百分比 0..100。</summary>
         public double MemoryPercent { get; private set; }
 
+        /// <summary>已用物理内存（GB）。</summary>
+        public double UsedMemoryGb { get; private set; }
+
+        /// <summary>物理内存总量（GB）。</summary>
+        public double TotalMemoryGb { get; private set; }
+
         /// <summary>系统是否提供了有效数据。</summary>
         public bool IsAvailable { get; private set; }
 
@@ -76,7 +82,23 @@ namespace Pynelith.Island.Services
             var memory = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
             if (GlobalMemoryStatusEx(ref memory))
             {
-                MemoryPercent = Math.Clamp(memory.dwMemoryLoad, 0, 100);
+                if (memory.ullTotalPhys > 0)
+                {
+                    // 用字节数算百分比（而不是整数 dwMemoryLoad），保留小数位，
+                    // 数值会随真实占用小幅变动，也更接近任务管理器的「使用中」。
+                    const double toGb = 1.0 / (1024 * 1024 * 1024);
+                    ulong used = memory.ullTotalPhys > memory.ullAvailPhys
+                        ? memory.ullTotalPhys - memory.ullAvailPhys
+                        : 0;
+                    TotalMemoryGb = memory.ullTotalPhys * toGb;
+                    UsedMemoryGb = used * toGb;
+                    MemoryPercent = Math.Clamp(used * 100.0 / memory.ullTotalPhys, 0, 100);
+                }
+                else
+                {
+                    MemoryPercent = Math.Clamp(memory.dwMemoryLoad, 0, 100);
+                }
+
                 IsAvailable = true;
             }
 

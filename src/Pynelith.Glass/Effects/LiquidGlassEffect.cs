@@ -74,6 +74,12 @@ namespace Pynelith.Glass.Effects
         /// <summary>染色强度，黑玻璃约 0.70。</summary>
         public double TintAmount { get; set; } = 0.70;
 
+        /// <summary>
+        /// 表面整体不透明度 0..1。采样模式保持 1；
+        /// 不做屏幕采样（录屏兼容）时可降低，让桌面透出来。
+        /// </summary>
+        public double SurfaceOpacity { get; set; } = 1.0;
+
         /// <summary>渐变染色上端（近黑）。</summary>
         public Color TintTop
         {
@@ -151,7 +157,8 @@ namespace Pynelith.Glass.Effects
             Resolution = new Point(w, h);
             Center = new Point(w * 0.5, h * 0.5);
             Shape = new Point4D(CornerRadius * scale, BezelWidth * scale, Thickness * scale, GlassIor);
-            Optics = new Point4D(Dispersion, LightAngle, TintAmount, 0);
+            Optics = new Point4D(Dispersion, LightAngle, TintAmount,
+                Math.Clamp(SurfaceOpacity, 0, 1));
         }
 
         private static PixelShader LoadShader()

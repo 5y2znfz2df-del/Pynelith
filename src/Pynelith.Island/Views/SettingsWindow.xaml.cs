@@ -272,7 +272,7 @@ namespace Pynelith.Island.Views
             var compat = NewGroup(page, "兼容");
             AddToggle(compat, "兼容模式（截图与录屏可见）",
                 () => Config.ScreenshotCompatible, v => Config.ScreenshotCompatible = v);
-            AddDescription(compat, "液态玻璃模式下，截图和录屏中不会显示灵动岛。");
+            AddDescription(compat, "开启后改用可录制的玻璃外观：轮廓与窄高光都在，截图/录屏能看到灵动岛；实时折射会暂停。");
 
             var glass = NewGroup(page, "玻璃");
             AddStepper(glass, "玻璃模糊强度", 0, 1, 0.01, 2,

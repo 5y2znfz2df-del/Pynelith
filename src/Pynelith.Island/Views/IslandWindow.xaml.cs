@@ -65,6 +65,7 @@ namespace Pynelith.Island.Views
         private LiquidGlassSurface? _glass;
         private string _appliedTheme = string.Empty;
         private bool _appliedCompatibility;
+        private bool _glassCompatMode; // 当前玻璃层是否为可录制的兼容模式
 
         // 空闲态内容实测宽度（时间 + 待机文字 + 监控），确保胶囊始终包得住内容
         private double _idleMinWidth;
@@ -426,19 +427,23 @@ namespace Pynelith.Island.Views
             _appliedTheme = Config.Theme;
             _appliedCompatibility = Config.ScreenshotCompatible;
 
-            // 兼容模式：实时玻璃层由 DWM 合成，截图/录屏抓不到。
-            // 开启后退化为静态磨砂底，外观仍然接近玻璃，但能被截图与录屏正常捕获。
-            bool glassTheme = string.Equals(_appliedTheme, ThemeStyles.LiquidGlass, StringComparison.Ordinal)
-                && !_appliedCompatibility;
+            // 液态玻璃：正常模式做抓屏折射（DWM 合成，截图/录屏抓不到）；
+            // 兼容模式改用同一套玻璃着色器但不做屏幕采样 —— 轮廓、窄高光、半透明染色都在，
+            // 窗口不再被排除出捕获，因此截图与录屏里能看到接近液态玻璃的岛。
+            bool liquidGlass = string.Equals(_appliedTheme, ThemeStyles.LiquidGlass, StringComparison.Ordinal);
+            bool recordableGlass = liquidGlass && _appliedCompatibility;
 
-            if (glassTheme)
+            if (liquidGlass)
             {
                 ThemeBackdrop.Background = Brushes.Transparent;
                 ThemeBackdrop.BorderThickness = new Thickness(0);
 
-                if (_glass == null)
+                // 从实时玻璃切到兼容玻璃（或反向）时必须重建玻璃层。
+                if (_glass == null || _glassCompatMode != recordableGlass)
                 {
-                    _glass = InstallGlass();
+                    _glass?.Dispose();
+                    _glass = InstallGlass(recordableGlass);
+                    _glassCompatMode = recordableGlass;
                 }
             }
             else
@@ -447,6 +452,7 @@ namespace Pynelith.Island.Views
                 {
                     _glass.Dispose();
                     _glass = null;
+                    _glassCompatMode = false;
                 }
 
                 if (string.Equals(_appliedTheme, ThemeStyles.PureBlack, StringComparison.Ordinal))
@@ -468,7 +474,7 @@ namespace Pynelith.Island.Views
                 }
                 else
                 {
-                    // 磨砂（以及液态玻璃 + 兼容模式）：深黑灰半透明 + 柔和纵向渐变
+                    // 磨砂：深黑灰半透明 + 柔和纵向渐变
                     ThemeBackdrop.Background = new LinearGradientBrush
                     {
                         StartPoint = new Point(0, 0),
@@ -512,7 +518,7 @@ namespace Pynelith.Island.Views
             return brush;
         }
 
-        private LiquidGlassSurface InstallGlass()
+        private LiquidGlassSurface InstallGlass(bool recordable)
         {
             var glass = LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
             {
@@ -526,6 +532,11 @@ namespace Pynelith.Island.Views
                 TintTop = Color.FromRgb(10, 11, 14),
                 TintBottom = Color.FromRgb(27, 31, 38),
                 CaptureMargin = 50,
+                // 兼容模式：不做屏幕采样、不排除捕获，保留玻璃轮廓与窄高光，
+                // 截图/录屏里就能看到这块玻璃；正常模式做实时折射。
+                UseScreenBackdrop = !recordable,
+                ExcludeFromCapture = !recordable,
+                SurfaceOpacity = recordable ? 0.86 : 1.0,
                 // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
                 LightFollowsCursor = false,
                 // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
@@ -590,7 +601,7 @@ namespace Pynelith.Island.Views
                 _metrics.MemoryPercent);
 
             IdleDetailMetrics.Text = string.Format(
-                "CPU {0:0}% · RAM {1:0}%",
+                "CPU {0:0}% · RAM {1:0.0}%",
                 _metrics.CpuPercent,
                 _metrics.MemoryPercent);
 

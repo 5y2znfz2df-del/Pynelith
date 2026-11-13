@@ -51,6 +51,12 @@ namespace Pynelith.Glass.Effects
             /// <summary>染色强度 0..1，黑玻璃约 0.70。</summary>
             public double TintAmount { get; set; } = 0.70;
 
+            /// <summary>
+            /// 表面整体不透明度 0..1，默认 1（采样模式）。
+            /// 不做屏幕采样的可用录制模式建议 0.86–0.92，让桌面透出来。
+            /// </summary>
+            public double SurfaceOpacity { get; set; } = 1.0;
+
             /// <summary>渐变染色上端（近黑）。</summary>
             public Color TintTop { get; set; } = Color.FromRgb(5, 6, 8);
 
@@ -104,10 +110,21 @@ namespace Pynelith.Glass.Effects
                 _injectedLayer = new Border
                 {
                     // 必须有实际绘制，否则 WPF 不会执行 Effect。
-                    // 采样模式下这层只是占位；非采样模式（远程可见）用乳白渐变当玻璃本体。
+                    // 采样模式下这层只是占位；非采样模式用深黑灰纵向渐变当玻璃本体，
+                    // 让录屏/截图里的岛也有体积感，而不是一块死黑。
                     Background = style.UseScreenBackdrop && style.ExcludeFromCapture
                         ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0))
-                        : new SolidColorBrush(Color.FromArgb(0xD0, 0x0A, 0x0C, 0x10)),
+                        : new LinearGradientBrush
+                        {
+                            StartPoint = new Point(0, 0),
+                            EndPoint = new Point(0, 1),
+                            GradientStops =
+                            {
+                                new GradientStop(Color.FromRgb(0x23, 0x26, 0x2C), 0.0),
+                                new GradientStop(Color.FromRgb(0x12, 0x14, 0x18), 0.5),
+                                new GradientStop(Color.FromRgb(0x07, 0x08, 0x0A), 1.0),
+                            },
+                        },
                     IsHitTestVisible = false,
                 };
                 panel.Children.Insert(0, _injectedLayer);
@@ -130,6 +147,7 @@ namespace Pynelith.Glass.Effects
                 TintAmount = style.TintAmount,
                 TintTop = style.TintTop,
                 TintBottom = style.TintBottom,
+                SurfaceOpacity = style.SurfaceOpacity,
             };
 
             _surface.Effect = _effect;
@@ -143,10 +161,20 @@ namespace Pynelith.Glass.Effects
             }
             else
             {
-                // 无采样：用半透明深色底代替背景，保留轮廓与高光。
+                // 无采样：用半透明深色渐变代替背景，保留轮廓与高光。
                 if (_injectedLayer != null)
                 {
-                    _injectedLayer.Background = new SolidColorBrush(Color.FromArgb(0xD0, 0x0A, 0x0C, 0x10));
+                    _injectedLayer.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Point(0, 0),
+                        EndPoint = new Point(0, 1),
+                        GradientStops =
+                        {
+                            new GradientStop(Color.FromRgb(0x23, 0x26, 0x2C), 0.0),
+                            new GradientStop(Color.FromRgb(0x12, 0x14, 0x18), 0.5),
+                            new GradientStop(Color.FromRgb(0x07, 0x08, 0x0A), 1.0),
+                        },
+                    };
                 }
 
                 _effect.TintAmount = 0.0;
@@ -347,6 +375,17 @@ namespace Pynelith.Glass.Effects
         private void SyncGeometry()
         {
             _effect.UpdateLayout(_surface.ActualWidth, _surface.ActualHeight, GetDpiScale());
+
+            // 无屏幕采样时，输入就是元素自身的渐变：按 1:1 采样，
+            // 否则默认的抓屏尺寸/偏移会把渐变映射到错误的位置。
+            if (!_screenBackdropActive)
+            {
+                double scale = GetDpiScale();
+                _effect.BackdropOffset = new Point(0, 0);
+                _effect.BackdropSize = new Point(
+                    Math.Max(1, _surface.ActualWidth * scale),
+                    Math.Max(1, _surface.ActualHeight * scale));
+            }
         }
 
         private double GetDpiScale()

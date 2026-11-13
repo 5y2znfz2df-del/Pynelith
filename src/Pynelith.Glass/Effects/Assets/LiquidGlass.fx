@@ -12,7 +12,7 @@
 float2 Resolution     : register(c0);  // 元素尺寸（物理像素）
 float2 Center         : register(c1);  // 玻璃中心（元素内坐标）
 float4 Shape          : register(c2);  // x=corner y=bezel z=thickness w=ior
-float4 Optics         : register(c3);  // x=dispersion y=lightAngle z=tintAmount
+float4 Optics         : register(c3);  // x=dispersion y=lightAngle z=tintAmount w=surfaceOpacity
 float4 TintTop        : register(c4);  // 渐变上端（近黑）
 float4 TintBottom     : register(c5);  // 渐变下端（蓝灰）
 float2 BackdropSize   : register(c6);  // 抓屏图像尺寸
@@ -114,5 +114,14 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     glass += rim * (0.02 + 0.16 * topness);
 
     float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
-    return float4(glass * alpha, alpha);
+
+    // 表面整体不透明度：采样模式为 1（完全由折射画面构成），
+    // 不做屏幕采样的可录制模式会调到 0.88 左右，让桌面透出来。
+    float opacity = saturate(Optics.w);
+    if (opacity <= 0.001)
+    {
+        opacity = 1.0;
+    }
+
+    return float4(glass * alpha * opacity, alpha * opacity);
 }
