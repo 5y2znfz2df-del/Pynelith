@@ -14,6 +14,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Pynelith.Glass;
 using Pynelith.Glass.Effects;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
@@ -63,6 +64,7 @@ namespace Pynelith.Island.Views
 
         // 玻璃层按主题动态安装/卸载：纯黑、磨砂主题下不运行抓屏，省下全部采样开销
         private LiquidGlassSurface? _glass;
+        private IGlassSurface? _compatBlur; // 兼容模式：胶囊下方由 DWM 合成的背景模糊
         private string _appliedTheme = string.Empty;
         private bool _appliedCompatibility;
         private bool _glassCompatMode; // 当前玻璃层是否为可录制的兼容模式
@@ -453,9 +455,13 @@ namespace Pynelith.Island.Views
                     _glass = InstallGlass(recordableGlass);
                     _glassCompatMode = recordableGlass;
                 }
+
+                ApplyCompatBackdrop(recordableGlass);
             }
             else
             {
+                ApplyCompatBackdrop(false);
+
                 if (_glass != null)
                 {
                     _glass.Dispose();
@@ -510,6 +516,31 @@ namespace Pynelith.Island.Views
         }
 
         /// <summary>
+        /// 兼容模式的"可录制玻璃"：在胶囊正下方挂一个 DWM 背景模糊伴随窗口。
+        /// 它由 DWM 合成，录屏/截图能看到；再叠一层半透明渐变与窄高光，
+        /// 视觉上接近磨砂玻璃，而不是一块死板纯色板。
+        /// </summary>
+        private void ApplyCompatBackdrop(bool enabled)
+        {
+            if (enabled)
+            {
+                if (_compatBlur == null)
+                {
+                    _compatBlur = GlassRenderer.Attach(this, new GlassOptions
+                    {
+                        Kind = GlassBackdropKind.CompositionBlur,
+                        CornerRadius = (float)Config.CornerRadius,
+                    });
+                }
+            }
+            else if (_compatBlur != null)
+            {
+                _compatBlur.Dispose();
+                _compatBlur = null;
+            }
+        }
+
+        /// <summary>
         /// 玻璃外框的描边：上缘是主反光，腰身完全消失，底缘只留极淡的环境反光。
         /// 用纵向渐变代替均匀白圈，避免一圈等亮的"塑料贴纸边"。
         /// </summary>
@@ -547,9 +578,7 @@ namespace Pynelith.Island.Views
                 // 截图/录屏里就能看到这块玻璃；正常模式做实时折射。
                 UseScreenBackdrop = !recordable,
                 ExcludeFromCapture = !recordable,
-                SurfaceOpacity = recordable ? 0.86 : 1.0,
-                // 录屏模式没有真实折射位移，用着色器补一层很窄的边缘色散
-                ChromaticAberration = recordable ? 0.9 : 0.0,
+                SurfaceOpacity = recordable ? 0.55 : 1.0,
                 // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
                 LightFollowsCursor = false,
                 // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
@@ -1098,6 +1127,13 @@ namespace Pynelith.Island.Views
             _lastGlassHeight = height;
             _lastGlassRadius = radius;
 
+            // 兼容模式的 DWM 模糊伴随窗口跟随胶囊位置/尺寸
+            if (_glassCompatMode && _compatBlur != null)
+            {
+                Point origin = CapsuleHost.TranslatePoint(new Point(0, 0), this);
+                _compatBlur.UpdateShape(new Rect(origin.X, origin.Y, width, height), (float)radius);
+            }
+
             _glass.Update(effect =>
             {
                 effect.CornerRadius = radius;
@@ -1106,10 +1142,10 @@ namespace Pynelith.Island.Views
                 effect.TintAmount = Config.GlassBlurStrength;
 
                 // 兼容模式没有真实折射，用整体不透明度补足"染色越浓越实"的手感：
-                // 0 → 通透玻璃，1 → 接近不透明的黑玻璃。
+                // 0 → 通透玻璃（能看清背景模糊），1 → 接近不透明的黑玻璃。
                 if (_glassCompatMode)
                 {
-                    effect.SurfaceOpacity = 0.70 + 0.28 * Math.Clamp(Config.GlassBlurStrength, 0, 1);
+                    effect.SurfaceOpacity = 0.52 + 0.33 * Math.Clamp(Config.GlassBlurStrength, 0, 1);
                 }
             });
         }
@@ -2111,6 +2147,9 @@ namespace Pynelith.Island.Views
 
             _glass?.Dispose();
             _glass = null;
+
+            _compatBlur?.Dispose();
+            _compatBlur = null;
 
             base.OnClosed(e);
         }

@@ -17,7 +17,6 @@ float4 TintTop        : register(c4);  // 渐变上端（近黑）
 float4 TintBottom     : register(c5);  // 渐变下端（蓝灰）
 float2 BackdropSize   : register(c6);  // 抓屏图像尺寸
 float2 BackdropOffset : register(c7);  // 元素原点在抓屏图中的偏移
-float4 Extras         : register(c8);  // x=兼容模式边缘色散强度
 
 sampler InputSampler : register(s0);
 
@@ -113,15 +112,6 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float topness = pow(saturate(0.5 - g.y * 0.5), 2.2);
     glass *= 1.0 - rim * 0.10;
     glass += rim * (0.02 + 0.16 * topness);
-
-    // 兼容模式（无屏幕采样）的边缘色散：静态度量太平滑，色散采样看不出来，
-    // 因此直接画出两层分离的彩边 —— 最外圈冷蓝紫（短波偏折更大），
-    // 往里一圈暖洋红，形成肉眼可见的 RGB 分离；采样模式由真实折射负责，这里为 0。
-    float chroma = saturate(Extras.x) * (0.45 + 0.55 * topness);
-    float blueCore = pow(1.0 - band, 5.0);
-    float warmHalo = pow(1.0 - band, 1.8) * (1.0 - blueCore);
-    glass += chroma * (blueCore * float3(0.06, 0.14, 0.55)
-                     + warmHalo * float3(0.48, 0.06, 0.18));
 
     float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
 

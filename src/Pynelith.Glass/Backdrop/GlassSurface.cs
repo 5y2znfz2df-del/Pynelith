@@ -17,6 +17,7 @@ namespace Pynelith.Glass.Backdrop
         private IGlassLayer? _layer;
         private HwndSource? _source;
         private IntPtr _hwnd;
+        private Rect _shapeDip = Rect.Empty; // 空 = 覆盖整窗；否则为窗口内的子矩形（胶囊）
         private bool _disposed;
 
         public GlassBackdropKind ActiveKind { get; private set; } = GlassBackdropKind.None;
@@ -160,8 +161,20 @@ namespace Pynelith.Glass.Backdrop
                 return;
             }
 
-            var deviceRect = new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
-            float radiusDevice = (float)(_options.CornerRadius * GetDpiScale());
+            double scale = GetDpiScale();
+            Rect deviceRect = new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+
+            // 子矩形模式：伴随窗口只覆盖胶囊，而不是整个（透明且更大的）宿主窗口。
+            if (!_shapeDip.IsEmpty)
+            {
+                deviceRect = new Rect(
+                    rect.Left + _shapeDip.X * scale,
+                    rect.Top + _shapeDip.Y * scale,
+                    Math.Max(1, _shapeDip.Width * scale),
+                    Math.Max(1, _shapeDip.Height * scale));
+            }
+
+            float radiusDevice = (float)(_options.CornerRadius * scale);
             _layer.OnOwnerRectChanged(deviceRect, radiusDevice);
         }
 
@@ -173,6 +186,8 @@ namespace Pynelith.Glass.Backdrop
 
         public void UpdateShape(Rect shapeInDip, float cornerRadiusInDip)
         {
+            // 传空矩形表示恢复「覆盖整个窗口」。
+            _shapeDip = shapeInDip.IsEmpty ? Rect.Empty : shapeInDip;
             _options.CornerRadius = cornerRadiusInDip;
             PushRect();
         }

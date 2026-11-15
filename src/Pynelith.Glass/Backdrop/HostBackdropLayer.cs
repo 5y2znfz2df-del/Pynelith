@@ -142,16 +142,14 @@ namespace Pynelith.Glass.Backdrop
             }
         }
 
-        /// <summary>把伴随窗口插到 owner 正下方的 Z 序位置。</summary>
+        /// <summary>
+        /// 把伴随窗口放到 owner 的正下方：直接以 owner 作为 insertAfter，
+        /// 这样玻璃层在宿主窗口之下、桌面之上。
+        /// （用 GW_HWNDPREV 会把伴随窗口插到 owner 上方，直接盖住内容。）
+        /// </summary>
         private void SyncZOrder()
         {
-            IntPtr insertAfter = NativeMethods.GetWindow(_ownerHwnd, NativeMethods.GW_HWNDPREV);
-            if (insertAfter == IntPtr.Zero)
-            {
-                insertAfter = NativeMethods.HWND_BOTTOM;
-            }
-
-            NativeMethods.SetWindowPos(_companionHwnd, insertAfter, 0, 0, 0, 0,
+            NativeMethods.SetWindowPos(_companionHwnd, _ownerHwnd, 0, 0, 0, 0,
                 NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }
 
