@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.1.8-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.1.9-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -98,7 +98,7 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 - CPU / 内存实时占用（1 秒采样，超过 85% 变色警示）
 - 待机文字与资源监控均可隐藏，胶囊宽度随内容自适应
 - 播放器退出（含网易云完全退出）后自动回到待机，无残留界面
-- 兼容模式：液态玻璃下开启后，改用可录制的玻璃外观（轮廓 + 窄高光 + 深色渐变），截图与录屏中可见；实时折射暂停
+- 兼容模式：液态玻璃下开启后，窗口不再被排除出捕获，截图与录屏里能看到岛；折射、色散与边缘高光与常规模式完全一致（采样时遮掉自身区域，避免自反馈）
 - 系统托盘常驻：双击打开设置，右键菜单可设置或退出
 
 **工程**
@@ -158,7 +158,7 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 拖动音量条 | 调整系统输出音量（与任务栏音量同步） |
 | 点击随机 / 循环 | 切换随机播放；循环依次为 关闭 → 列表 → 单曲 |
 | 面板内键盘 | 空格播放/暂停、←→ 快退快进 5 秒、↑↓ 音量、Esc 收起 |
-| 设置 → 外观 → 兼容模式 | 截图 / 录屏时能看到带玻璃轮廓与高光的灵动岛（实时折射暂停） |
+| 设置 → 外观 → 兼容模式 | 截图 / 录屏时能看到灵动岛，折射 / 色散 / 边缘高光与常规模式一致 |
 | 拖动胶囊 | 改变停靠位置（自动写回配置） |
 | 右键胶囊 | 歌词提前 / 延后 200ms、归零、设置、退出 |
 
@@ -252,7 +252,7 @@ var glass = LiquidGlassSurface.Install(card, new LiquidGlassSurface.LiquidGlassS
     Dispersion = 0.06,          // 色散强度
     TintAmount = 0.7,
     LightFollowsCursor = true,  // 高光跟随鼠标
-    ExcludeFromCapture = false, // true：截图与录屏中不可见
+    ExcludeFromCapture = false, // true：截图与录屏中不可见；false：可见且折射照常
 });
 
 // 卡片尺寸/圆角由布局决定，玻璃会跟随刷新

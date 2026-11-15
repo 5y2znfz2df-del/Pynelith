@@ -435,9 +435,10 @@ namespace Pynelith.Island.Views
             _appliedTheme = Config.Theme;
             _appliedCompatibility = Config.ScreenshotCompatible;
 
-            // 液态玻璃：正常模式做抓屏折射（DWM 合成，截图/录屏抓不到）；
-            // 兼容模式改用同一套玻璃着色器但不做屏幕采样 —— 轮廓、窄高光、半透明染色都在，
-            // 窗口不再被排除出捕获，因此截图与录屏里能看到接近液态玻璃的岛。
+            // 液态玻璃：两种模式都做实时抓屏折射。
+            // 常规模式把窗口排除出捕获（更高清，但截图/录屏里岛会消失）；
+            // 兼容模式不排除捕获（截图/录屏能看到岛），采样时遮掉自身区域避免自反馈，
+            // 折射带、色散、染色与边缘高光保持一致。
             bool liquidGlass = string.Equals(_appliedTheme, ThemeStyles.LiquidGlass, StringComparison.Ordinal);
             bool recordableGlass = liquidGlass && _appliedCompatibility;
 
@@ -530,6 +531,9 @@ namespace Pynelith.Island.Views
 
         private LiquidGlassSurface InstallGlass(bool recordable)
         {
+            // 两种模式只在「是否排除出抓屏」上不同：
+            // 常规模式把窗口排除，采样天然拿到干净桌面；兼容模式不排除（录屏里能看到岛），
+            // 采样时用遮罩抹掉自身区域，因此折射带、色散、边缘高光的参数与观感完全一致。
             var glass = LiquidGlassSurface.Install(CapsuleHost, new LiquidGlassSurface.LiquidGlassStyle
             {
                 CornerRadius = Config.CornerRadius,
@@ -543,11 +547,10 @@ namespace Pynelith.Island.Views
                 TintTop = Color.FromRgb(10, 11, 14),
                 TintBottom = Color.FromRgb(27, 31, 38),
                 CaptureMargin = 50,
-                // 兼容模式：不做屏幕采样、不排除捕获，保留玻璃轮廓与窄高光，
-                // 截图/录屏里就能看到这块玻璃；正常模式做实时折射。
-                UseScreenBackdrop = !recordable,
+                // 兼容模式同样做实时折射，只把窗口留在抓屏范围内，截图/录屏可见
+                UseScreenBackdrop = true,
                 ExcludeFromCapture = !recordable,
-                SurfaceOpacity = recordable ? 0.55 : 1.0,
+                SurfaceOpacity = 1.0,
                 // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
                 LightFollowsCursor = false,
                 // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
@@ -1103,20 +1106,13 @@ namespace Pynelith.Island.Views
             _lastGlassHeight = height;
             _lastGlassRadius = radius;
 
-            // 兼容模式的表面不透明度
+            // 两种模式共用同一组光学参数：折射、色散、染色与表面不透明度逐项一致
             _glass.Update(effect =>
             {
                 effect.CornerRadius = radius;
                 effect.BezelWidth = bezel;
                 effect.Thickness = bezel * 1.35;
                 effect.TintAmount = Config.GlassBlurStrength;
-
-                // 兼容模式没有真实折射，用整体不透明度补足"染色越浓越实"的手感：
-                // 0 → 通透玻璃，1 → 接近不透明的黑玻璃。
-                if (_glassCompatMode)
-                {
-                    effect.SurfaceOpacity = 0.72 + 0.20 * Math.Clamp(Config.GlassBlurStrength, 0, 1);
-                }
             });
         }
 

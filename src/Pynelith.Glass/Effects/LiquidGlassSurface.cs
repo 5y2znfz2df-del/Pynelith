@@ -21,7 +21,8 @@ namespace Pynelith.Glass.Effects
     /// 工作原理：
     /// 1. 定时抓取元素背后的屏幕像素（GDI BitBlt，复用缓冲，无每帧分配）；
     /// 2. 作为 <see cref="LiquidGlassEffect"/> 的采样输入，做轻模糊 + 高饱和 + 边缘透镜折射；
-    /// 3. 宿主窗口以 WDA_EXCLUDEFROMCAPTURE 排除自身，避免采样自反馈；
+    /// 3. 宿主窗口默认以 WDA_EXCLUDEFROMCAPTURE 排除自身，避免采样自反馈；
+    ///    需要出现在录屏里时改为遮罩自身区域，折射参数与效果保持不变；
     /// 4. 采样不可用时自动降级为「元素自身内容 + 高光/亮边」的玻璃片效果。
     ///
     /// 注意：宿主窗口需 <c>AllowsTransparency="True"</c> 才能让圆角外的桌面透出。
@@ -79,7 +80,8 @@ namespace Pynelith.Glass.Effects
             /// 是否把宿主窗口排除出截屏/录屏。
             /// 默认 true —— 让屏幕采样抓不到自己，避免自反馈。
             /// 若需要窗口出现在远程桌面/串流/录屏画面中，必须设为 false；
-            /// 此时屏幕采样会自动关闭（否则会抓到自己），退化为半透明玻璃外观。
+            /// 此时采样仍照常进行，但会把玻璃自身的区域从抓屏图里遮掉，
+            /// 因此折射、色散与边缘高光与排除捕获时完全一致。
             /// </summary>
             public bool ExcludeFromCapture { get; set; } = true;
         }
@@ -112,7 +114,7 @@ namespace Pynelith.Glass.Effects
                     // 必须有实际绘制，否则 WPF 不会执行 Effect。
                     // 采样模式下这层只是占位；非采样模式用斜向冷/暖渐变当玻璃本体，
                     // 这样边缘折射采样能"掰"出肉眼可见的色相变化，避免死板的塑料片。
-                    Background = style.UseScreenBackdrop && style.ExcludeFromCapture
+                    Background = style.UseScreenBackdrop
                         ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0))
                         : CreateStaticGlassBrush(),
                     IsHitTestVisible = false,
@@ -144,8 +146,11 @@ namespace Pynelith.Glass.Effects
             _surface.SizeChanged += OnTargetSizeChanged;
             _effect.UpdateLayout(_surface.ActualWidth, _surface.ActualHeight, GetDpiScale());
 
-            // 关闭截屏排除时不能做屏幕采样（会抓到自身形成反馈），走半透明玻璃外观。
-            if (style.UseScreenBackdrop && style.ExcludeFromCapture)
+            // 屏幕采样与「是否排除出捕获」解耦：
+            // - 排除捕获（常规模式）：抓屏里没有自己，边缘折射直接拿到真实桌面；
+            // - 不排除（录屏兼容模式）：抓屏里包含自己，采样时用遮罩把自己抹掉，
+            //   边缘折射仍然采样到玻璃外侧的真实桌面像素，色散/折射与常规模式一致。
+            if (style.UseScreenBackdrop)
             {
                 AttachScreenBackdrop();
             }
@@ -224,7 +229,7 @@ namespace Pynelith.Glass.Effects
             _window.StateChanged += OnWindowStateChanged;
 
             IntPtr hwnd = new WindowInteropHelper(_window).Handle;
-            if (hwnd != IntPtr.Zero)
+            if (hwnd != IntPtr.Zero && _style.ExcludeFromCapture)
             {
                 ApplyDisplayAffinity(hwnd);
             }
@@ -246,7 +251,7 @@ namespace Pynelith.Glass.Effects
             }
 
             IntPtr hwnd = new WindowInteropHelper(_window).Handle;
-            if (hwnd != IntPtr.Zero)
+            if (hwnd != IntPtr.Zero && _style.ExcludeFromCapture)
             {
                 ApplyDisplayAffinity(hwnd);
             }
@@ -313,11 +318,17 @@ namespace Pynelith.Glass.Effects
                 int margin = Math.Max(1, (int)Math.Round(_style.CaptureMargin * dpi.DpiScaleX));
 
                 // 四周多抓一圈：边缘折射要采到玻璃外侧的像素，窗口移动时也不会出现错位切片。
+                // 未被排除出捕获时抓屏里会有玻璃自身，用遮罩抹掉（否则采样会不断吃到自己的输出）。
+                Int32Rect mask = _style.ExcludeFromCapture
+                    ? new Int32Rect(0, 0, 0, 0)
+                    : new Int32Rect(margin, margin, width, height);
+
                 _screenBackdropActive = _sampler.Capture(
                     (int)Math.Round(origin.X) - margin,
                     (int)Math.Round(origin.Y) - margin,
                     width + margin * 2,
-                    height + margin * 2);
+                    height + margin * 2,
+                    mask);
 
                 if (_screenBackdropActive)
                 {
