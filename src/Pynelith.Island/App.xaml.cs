@@ -1,6 +1,9 @@
 using System;
 using System.Threading;
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
+using Microsoft.Win32;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
@@ -26,6 +29,11 @@ namespace Pynelith.Island
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // 渲染走 GPU：WPF 默认就是硬件（D3D9Ex）渲染，这里显式声明意图，
+            // 只有驱动缺失 / 远程桌面等情况才会由系统退回 CPU 软件渲染。
+            RenderOptions.ProcessRenderMode = RenderMode.Default;
+            PreferHighPerformanceGpu();
 
             // 单实例：重复启动直接退出，避免托盘/顶栏出现多个灵动岛，也避免安装器
             // 自动拉起时与用户已手动打开的实例相互抢停靠位置。
@@ -66,6 +74,43 @@ namespace Pynelith.Island
             _tray = new TrayService(island.ShowSettingsFromTray, island.ExitFromTray);
 
             _ = _media.InitializeAsync();
+        }
+
+        /// <summary>
+        /// 让 Windows 按「独显 &gt; 核显 &gt; 软件」的顺序为 Pynelith 选择渲染适配器。
+        /// 写入的是系统标准的「图形性能首选项」（HKCU\UserGpuPreferences，2 = 高性能）：
+        /// 没有独显时自动落到核显；GPU 不可用（如远程桌面 / 无 WDDM 驱动）时由 WPF 退回软件渲染。
+        /// 该偏好由系统在创建 D3D 设备时读取，写入后需重启程序才会生效。
+        /// 注意：Windows 10 1803 起支持；更早的系统忽略此键，仍按系统默认适配器渲染。
+        /// </summary>
+        private static void PreferHighPerformanceGpu()
+        {
+            try
+            {
+                string? exePath = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exePath))
+                {
+                    return;
+                }
+
+                const string preference = "GpuPreference=2;"; // 0=系统决定 1=省电 2=高性能
+
+                using RegistryKey? key = Registry.CurrentUser.CreateSubKey(
+                    @"Software\Microsoft\DirectX\UserGpuPreferences");
+                if (key == null)
+                {
+                    return;
+                }
+
+                if (!string.Equals(key.GetValue(exePath) as string, preference, StringComparison.Ordinal))
+                {
+                    key.SetValue(exePath, preference, RegistryValueKind.String);
+                }
+            }
+            catch (Exception)
+            {
+                // 注册表不可写（受控环境）时保持系统默认选择，不影响启动。
+            }
         }
 
         private static void WriteCrashLog(System.Exception? exception)

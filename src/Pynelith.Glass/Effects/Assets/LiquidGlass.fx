@@ -132,9 +132,8 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float3 interiorColor = lerp(glass, tint.rgb, tintWeight);
 
     // 边缘折射带保持不透明：折射画面、镜面高光与轮廓都在这一条带里。
-    // 兼容模式把这条带收窄（内部是透出的真实桌面，宽边带会出现一圈"雾面框"）。
-    float bandWidth = lerp(Shape.y * 0.9, Shape.y * 0.35, tintWeight);
-    float edgeBand = 1.0 - smoothstep(0.0, max(bandWidth, 1.0), inward);
+    // 带宽与采样模式一致，保证兼容模式下边缘折射的可见范围不被削弱。
+    float edgeBand = 1.0 - smoothstep(0.0, max(Shape.y * 0.9, 1.0), inward);
     float3 color = lerp(interiorColor, glass, edgeBand);
     float surfaceAlpha = coverage * opacity * lerp(interiorAlpha, 1.0, edgeBand);
 
