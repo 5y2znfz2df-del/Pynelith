@@ -272,7 +272,7 @@ namespace Pynelith.Island.Views
             var compat = NewGroup(page, "兼容");
             AddToggle(compat, "兼容模式（截图与录屏可见）",
                 () => Config.ScreenshotCompatible, v => Config.ScreenshotCompatible = v);
-            AddDescription(compat, "开启后改用可录制的磨砂玻璃：DWM 背景虚化 + 玻璃轮廓与窄高光，截图/录屏可见；不做实时折射。");
+            AddDescription(compat, "开启后改用可录制的玻璃外观：轮廓、窄高光与深色渐变都在，截图/录屏可见；实时折射暂停。");
 
             var glass = NewGroup(page, "玻璃");
             AddStepper(glass, "染色浓度", 0, 1, 0.01, 2,

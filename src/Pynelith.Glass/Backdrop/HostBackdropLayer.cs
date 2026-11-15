@@ -69,6 +69,9 @@ namespace Pynelith.Glass.Backdrop
                 {
                     // Win11：DWM 桌面模糊（与 WinUI DesktopAcrylic 同通道）
                     NativeMethods.SetSystemBackdrop(_companionHwnd, NativeMethods.DWMSBT_TRANSIENTWINDOW);
+                    // 让 DWM 把伴随窗口的角也裁圆：否则亚克力会铺满整个矩形，
+                    // 在胶囊四角露出一块直角虚化。
+                    NativeMethods.SetCornerPreference(_companionHwnd, 2 /* DWMWCP_ROUND */);
                 }
                 else
                 {
