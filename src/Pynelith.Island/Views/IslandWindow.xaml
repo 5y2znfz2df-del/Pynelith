@@ -298,6 +298,10 @@
             </Grid>
 
             <!-- 设计尺寸 = 胶囊尺寸（缩放前），ContentScale 统一放大 -->
+            <!-- 用 Canvas 承载 ContentHost：Canvas 不约束、不裁剪子元素。
+                 否则 GlobalScale<1 时 ContentHost 的设计宽度大于胶囊，会被父级按槽位裁掉，
+                 最右侧的「下一首」按钮就会消失。 -->
+            <Canvas x:Name="ContentCanvas" ClipToBounds="False">
             <!-- ContentHost 以「未缩放设计尺寸」布局，再由 ContentScale 放大/缩小到胶囊实际尺寸。
                  必须左上对齐：RenderTransform 以左上角为原点，居中会让 GlobalScale≠1 时整体
                  向左/右偏移（消息文字顶到圆角外就是这么来的）。 -->
@@ -719,6 +723,7 @@
                     </Button>
                 </StackPanel>
             </Grid>
+            </Canvas>
         </Grid>
     </Grid>
 </Window>
