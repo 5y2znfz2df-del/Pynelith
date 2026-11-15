@@ -537,7 +537,8 @@ namespace Pynelith.Island.Views
                 BezelWidth = 18,
                 Thickness = 30,
                 GlassIor = 1.45,
-                Dispersion = 0.02,
+                // 0.02 几乎看不见；0.07 才能在边缘看到真实 RGB 分离
+                Dispersion = 0.07,
                 TintAmount = Config.GlassBlurStrength,
                 TintTop = Color.FromRgb(10, 11, 14),
                 TintBottom = Color.FromRgb(27, 31, 38),
@@ -1103,6 +1104,13 @@ namespace Pynelith.Island.Views
                 effect.BezelWidth = bezel;
                 effect.Thickness = bezel * 1.35;
                 effect.TintAmount = Config.GlassBlurStrength;
+
+                // 兼容模式没有真实折射，用整体不透明度补足"染色越浓越实"的手感：
+                // 0 → 通透玻璃，1 → 接近不透明的黑玻璃。
+                if (_glassCompatMode)
+                {
+                    effect.SurfaceOpacity = 0.70 + 0.28 * Math.Clamp(Config.GlassBlurStrength, 0, 1);
+                }
             });
         }
 

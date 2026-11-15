@@ -116,21 +116,11 @@ namespace Pynelith.Glass.Effects
                 _injectedLayer = new Border
                 {
                     // 必须有实际绘制，否则 WPF 不会执行 Effect。
-                    // 采样模式下这层只是占位；非采样模式用深黑灰纵向渐变当玻璃本体，
-                    // 让录屏/截图里的岛也有体积感，而不是一块死黑。
+                    // 采样模式下这层只是占位；非采样模式用斜向冷/暖渐变当玻璃本体，
+                    // 这样边缘折射采样能"掰"出肉眼可见的色相变化，避免死板的塑料片。
                     Background = style.UseScreenBackdrop && style.ExcludeFromCapture
                         ? new SolidColorBrush(Color.FromArgb(1, 0, 0, 0))
-                        : new LinearGradientBrush
-                        {
-                            StartPoint = new Point(0, 0),
-                            EndPoint = new Point(0, 1),
-                            GradientStops =
-                            {
-                                new GradientStop(Color.FromRgb(0x23, 0x26, 0x2C), 0.0),
-                                new GradientStop(Color.FromRgb(0x12, 0x14, 0x18), 0.5),
-                                new GradientStop(Color.FromRgb(0x07, 0x08, 0x0A), 1.0),
-                            },
-                        },
+                        : CreateStaticGlassBrush(),
                     IsHitTestVisible = false,
                 };
                 panel.Children.Insert(0, _injectedLayer);
@@ -168,20 +158,10 @@ namespace Pynelith.Glass.Effects
             }
             else
             {
-                // 无采样：用半透明深色渐变代替背景，保留轮廓与高光。
+                // 无采样：用斜向深色渐变代替背景，保留轮廓与高光。
                 if (_injectedLayer != null)
                 {
-                    _injectedLayer.Background = new LinearGradientBrush
-                    {
-                        StartPoint = new Point(0, 0),
-                        EndPoint = new Point(0, 1),
-                        GradientStops =
-                        {
-                            new GradientStop(Color.FromRgb(0x23, 0x26, 0x2C), 0.0),
-                            new GradientStop(Color.FromRgb(0x12, 0x14, 0x18), 0.5),
-                            new GradientStop(Color.FromRgb(0x07, 0x08, 0x0A), 1.0),
-                        },
-                    };
+                    _injectedLayer.Background = CreateStaticGlassBrush();
                 }
 
                 _effect.TintAmount = 0.0;
@@ -376,6 +356,26 @@ namespace Pynelith.Glass.Effects
         }
 
         #endregion
+
+        /// <summary>
+        /// 非采样模式的玻璃本体：斜向冷灰 → 近黑 → 暖灰。
+        /// 色相变化让边缘折射有东西可"掰"，比纯纵向渐变更像玻璃。
+        /// </summary>
+        private static Brush CreateStaticGlassBrush()
+        {
+            return new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromRgb(0x2B, 0x30, 0x3D), 0.0),
+                    new GradientStop(Color.FromRgb(0x16, 0x18, 0x22), 0.42),
+                    new GradientStop(Color.FromRgb(0x09, 0x0A, 0x0F), 0.72),
+                    new GradientStop(Color.FromRgb(0x1C, 0x12, 0x16), 1.0),
+                },
+            };
+        }
 
         private void OnTargetSizeChanged(object sender, SizeChangedEventArgs e) => SyncGeometry();
 
