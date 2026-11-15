@@ -84,6 +84,8 @@ namespace Pynelith.Island.Views
         private Point _pressPoint;
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
+        private double _lastGlassRadius = -1;
+        private bool _glassDirty; // 配置里的玻璃参数变了，下一帧强制推给渲染模块
         private int _glassFrameSkip;
         private long _springStartTicks;
 
@@ -383,6 +385,12 @@ namespace Pynelith.Island.Views
             {
                 ApplyTheme();
             }
+            else if (_glass != null)
+            {
+                // 染色浓度 / 圆角这类参数不改变胶囊尺寸，必须显式标记一次重推，
+                // 否则 ApplyGlassShape 会以"尺寸没变"为由直接返回。
+                _glassDirty = true;
+            }
 
             ApplyMetricsTimer();
 
@@ -495,6 +503,8 @@ namespace Pynelith.Island.Views
             // 玻璃层重建后强制下一帧把形状参数推过去
             _lastGlassWidth = -1;
             _lastGlassHeight = -1;
+            _lastGlassRadius = -1;
+            _glassDirty = true;
             _glassFrameSkip = 0;
             ApplyMorph(_p);
         }
@@ -537,6 +547,8 @@ namespace Pynelith.Island.Views
                 UseScreenBackdrop = !recordable,
                 ExcludeFromCapture = !recordable,
                 SurfaceOpacity = recordable ? 0.86 : 1.0,
+                // 录屏模式没有真实折射位移，用着色器补一层很窄的边缘色散
+                ChromaticAberration = recordable ? 0.9 : 0.0,
                 // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
                 LightFollowsCursor = false,
                 // 抓屏在 UI 线程执行，是逐帧动画里最重的一步；玻璃只是背景模糊，
@@ -1060,24 +1072,30 @@ namespace Pynelith.Island.Views
             // 动画期间每 5 帧才真正刷新玻璃：一次刷新包含抓屏 + 像素处理 + 位图上传，
             // 是逐帧动画里最重的一步。降到约 12Hz 后，慢帧（>16.7ms）数量显著下降，
             // 而玻璃是背景模糊、形状差异在 2.5 DIP 内不可见，观感无损失。
-            if (_springRunning && (++_glassFrameSkip % 5) != 0)
+            // 配置参数（染色浓度、圆角）变化时跳过节流，立即重推一次。
+            bool force = _glassDirty;
+            if (!force && _springRunning && (++_glassFrameSkip % 5) != 0)
             {
                 return;
             }
 
-            if (Math.Abs(width - _lastGlassWidth) < 2.5
+            double shortSide = Math.Min(width, height);
+            double radius = Math.Min(Config.CornerRadius * Config.GlobalScale, shortSide * 0.5);
+            double bezel = Math.Min(22 * Config.GlobalScale, shortSide * 0.26);
+
+            if (!force
+                && Math.Abs(width - _lastGlassWidth) < 2.5
                 && Math.Abs(height - _lastGlassHeight) < 2.5
+                && Math.Abs(radius - _lastGlassRadius) < 0.1
                 && _lastGlassWidth > 0)
             {
                 return;
             }
 
+            _glassDirty = false;
             _lastGlassWidth = width;
             _lastGlassHeight = height;
-
-            double shortSide = Math.Min(width, height);
-            double radius = Math.Min(Config.CornerRadius * Config.GlobalScale, shortSide * 0.5);
-            double bezel = Math.Min(22 * Config.GlobalScale, shortSide * 0.26);
+            _lastGlassRadius = radius;
 
             _glass.Update(effect =>
             {

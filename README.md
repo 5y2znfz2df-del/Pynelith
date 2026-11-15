@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.1.8-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.1.9-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -98,7 +98,7 @@ QQ 音乐 / 网易云 / 酷狗 三源自动匹配（标题 + 歌手 + 时长择�
 - CPU / 内存实时占用（1 秒采样，超过 85% 变色警示）
 - 待机文字与资源监控均可隐藏，胶囊宽度随内容自适应
 - 播放器退出（含网易云完全退出）后自动回到待机，无残留界面
-- 兼容模式：液态玻璃下开启后，改用可录制的玻璃外观（轮廓 + 窄高光 + 半透明渐变），截图与录屏中可见；实时折射暂停
+- 兼容模式：液态玻璃下开启后，改用可录制的玻璃外观（轮廓 + 窄高光 + 边缘色散 + 半透明渐变），截图与录屏中可见；实时折射暂停
 - 系统托盘常驻：双击打开设置，右键菜单可设置或退出
 
 **工程**

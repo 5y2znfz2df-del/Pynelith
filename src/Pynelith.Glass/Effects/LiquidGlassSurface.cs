@@ -57,6 +57,12 @@ namespace Pynelith.Glass.Effects
             /// </summary>
             public double SurfaceOpacity { get; set; } = 1.0;
 
+            /// <summary>
+            /// 兼容模式（无屏幕采样）下的边缘色散强度 0..1。
+            /// 采样模式有真实 RGB 折射，保持 0 即可。
+            /// </summary>
+            public double ChromaticAberration { get; set; }
+
             /// <summary>渐变染色上端（近黑）。</summary>
             public Color TintTop { get; set; } = Color.FromRgb(5, 6, 8);
 
@@ -148,6 +154,7 @@ namespace Pynelith.Glass.Effects
                 TintTop = style.TintTop,
                 TintBottom = style.TintBottom,
                 SurfaceOpacity = style.SurfaceOpacity,
+                ChromaticAberration = style.ChromaticAberration,
             };
 
             _surface.Effect = _effect;

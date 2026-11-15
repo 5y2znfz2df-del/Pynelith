@@ -49,6 +49,10 @@ namespace Pynelith.Glass.Effects
             DependencyProperty.Register(nameof(BackdropOffset), typeof(Point), typeof(LiquidGlassEffect),
                 new UIPropertyMetadata(new Point(120, 120), PixelShaderConstantCallback(7)));
 
+        private static readonly DependencyProperty ChromaticProperty =
+            DependencyProperty.Register(nameof(ChromaticAberration), typeof(double), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(0.0, PixelShaderConstantCallback(8)));
+
         #endregion
 
         #region 语义化参数
@@ -79,6 +83,16 @@ namespace Pynelith.Glass.Effects
         /// 不做屏幕采样（录屏兼容）时可降低，让桌面透出来。
         /// </summary>
         public double SurfaceOpacity { get; set; } = 1.0;
+
+        /// <summary>
+        /// 兼容模式（无屏幕采样）下的边缘色散强度 0..1。
+        /// 采样模式本身有真实 RGB 折射位移，这里保持 0 即可。
+        /// </summary>
+        public double ChromaticAberration
+        {
+            get => (double)GetValue(ChromaticProperty);
+            set => SetValue(ChromaticProperty, value);
+        }
 
         /// <summary>渐变染色上端（近黑）。</summary>
         public Color TintTop
@@ -139,6 +153,7 @@ namespace Pynelith.Glass.Effects
             UpdateShaderValue(TintBottomProperty);
             UpdateShaderValue(BackdropSizeProperty);
             UpdateShaderValue(BackdropOffsetProperty);
+            UpdateShaderValue(ChromaticProperty);
 
             PushUniforms(428, 248, 1.0);
         }

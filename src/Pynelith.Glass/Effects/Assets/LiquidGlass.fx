@@ -17,6 +17,7 @@ float4 TintTop        : register(c4);  // 渐变上端（近黑）
 float4 TintBottom     : register(c5);  // 渐变下端（蓝灰）
 float2 BackdropSize   : register(c6);  // 抓屏图像尺寸
 float2 BackdropOffset : register(c7);  // 元素原点在抓屏图中的偏移
+float4 Extras         : register(c8);  // x=兼容模式边缘色散强度
 
 sampler InputSampler : register(s0);
 
@@ -112,6 +113,12 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float topness = pow(saturate(0.5 - g.y * 0.5), 2.2);
     glass *= 1.0 - rim * 0.10;
     glass += rim * (0.02 + 0.16 * topness);
+
+    // 兼容模式（无屏幕采样）的边缘色散：冷紫上缘 + 极淡暖底，
+    // 模拟 RGB 在玻璃边缘的分离；采样模式下由真实折射位移负责，这里为 0。
+    float fringe = pow(1.0 - band, 6.0) * saturate(Extras.x);
+    glass += fringe * (topness * float3(0.055, 0.010, 0.095)
+                     + (1.0 - topness) * float3(0.045, 0.006, 0.014));
 
     float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
 

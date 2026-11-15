@@ -275,8 +275,9 @@ namespace Pynelith.Island.Views
             AddDescription(compat, "开启后改用可录制的玻璃外观：轮廓与窄高光都在，截图/录屏能看到灵动岛；实时折射会暂停。");
 
             var glass = NewGroup(page, "玻璃");
-            AddStepper(glass, "玻璃模糊强度", 0, 1, 0.01, 2,
+            AddStepper(glass, "染色浓度", 0, 1, 0.01, 2,
                 () => Config.GlassBlurStrength, v => Config.GlassBlurStrength = v);
+            AddDescription(glass, "越低越通透：0 只剩折射，1 几乎是不透明的黑玻璃。");
             AddStepper(glass, "圆角半径", 0, 60, 1, 0,
                 () => Config.CornerRadius, v => Config.CornerRadius = v);
 
