@@ -44,25 +44,25 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _globalScale, Math.Clamp(value, 0.5, 2.0));
         }
 
-        /// <summary>收起宽度（DIP，缩放前）：120（仅图标）~ 240（长文本上限）。</summary>
+        /// <summary>收起宽度（DIP，缩放前）。不设下限，0 表示完全收起；上限仅防止误输入超大值。</summary>
         public double CollapsedWidth
         {
             get => _collapsedWidth;
-            set => Set(ref _collapsedWidth, Math.Clamp(value, 120, 240));
+            set => Set(ref _collapsedWidth, Math.Clamp(value, 0, 1200));
         }
 
-        /// <summary>收起高度（DIP，缩放前）。媒体态高度与它保持一致。</summary>
+        /// <summary>收起高度（DIP，缩放前）。不设下限，0 表示完全收起；媒体态高度与它一致。</summary>
         public double CollapsedHeight
         {
             get => _collapsedHeight;
-            set => Set(ref _collapsedHeight, Math.Clamp(value, 28, 96));
+            set => Set(ref _collapsedHeight, Math.Clamp(value, 0, 400));
         }
 
-        /// <summary>媒体态宽度（DIP，缩放前）。高度始终与空闲态一致，避免遮挡视野。</summary>
+        /// <summary>媒体态宽度（DIP，缩放前）。不设下限，0 表示完全收起；高度始终与空闲态一致。</summary>
         public double ExpandedWidth
         {
             get => _expandedWidth;
-            set => Set(ref _expandedWidth, Math.Clamp(value, 120, 240));
+            set => Set(ref _expandedWidth, Math.Clamp(value, 0, 1200));
         }
 
         /// <summary>相对「顶部居中」停靠点的 X 偏移（DIP，正值向右）。</summary>
