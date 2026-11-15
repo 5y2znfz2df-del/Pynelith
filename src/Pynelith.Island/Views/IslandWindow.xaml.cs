@@ -547,9 +547,11 @@ namespace Pynelith.Island.Views
                 TintTop = Color.FromRgb(10, 11, 14),
                 TintBottom = Color.FromRgb(27, 31, 38),
                 CaptureMargin = 50,
-                // 兼容模式同样做实时折射，只把窗口留在抓屏范围内，截图/录屏可见
+                // 兼容模式同样做实时折射，只把窗口留在抓屏范围内，截图/录屏可见；
+                // 内部改为半透明染色，让真实桌面直接从窗口透出（合成结果与常规模式一致）
                 UseScreenBackdrop = true,
                 ExcludeFromCapture = !recordable,
+                TransparentInterior = recordable,
                 SurfaceOpacity = 1.0,
                 // 固定光源更克制；跟随鼠标的大面积游动高光会显得"油腻"
                 LightFollowsCursor = false,

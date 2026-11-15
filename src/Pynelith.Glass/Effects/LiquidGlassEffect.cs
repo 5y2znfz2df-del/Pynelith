@@ -49,6 +49,10 @@ namespace Pynelith.Glass.Effects
             DependencyProperty.Register(nameof(BackdropOffset), typeof(Point), typeof(LiquidGlassEffect),
                 new UIPropertyMetadata(new Point(120, 120), PixelShaderConstantCallback(7)));
 
+        private static readonly DependencyProperty CompositeProperty =
+            DependencyProperty.Register(nameof(Composite), typeof(Point4D), typeof(LiquidGlassEffect),
+                new UIPropertyMetadata(new Point4D(0, 0, 0, 0), PixelShaderConstantCallback(8)));
+
         #endregion
 
         #region 语义化参数
@@ -79,6 +83,13 @@ namespace Pynelith.Glass.Effects
         /// 不做屏幕采样（录屏兼容）时可降低，让桌面透出来。
         /// </summary>
         public double SurfaceOpacity { get; set; } = 1.0;
+
+        /// <summary>
+        /// 内部染色权重 0..1。0（默认）= 内部由采样到的背景完全不透明覆盖；
+        /// 1 = 内部只输出染色 alpha，真实桌面由窗口自身透出（录屏兼容模式），
+        /// 边缘折射带仍保持不透明，合成结果与 0 时一致。
+        /// </summary>
+        public double InteriorTintWeight { get; set; }
 
         /// <summary>渐变染色上端（近黑）。</summary>
         public Color TintTop
@@ -124,6 +135,7 @@ namespace Pynelith.Glass.Effects
         private Point Center { get => (Point)GetValue(CenterProperty); set => SetValue(CenterProperty, value); }
         private Point4D Shape { get => (Point4D)GetValue(ShapeProperty); set => SetValue(ShapeProperty, value); }
         private Point4D Optics { get => (Point4D)GetValue(OpticsProperty); set => SetValue(OpticsProperty, value); }
+        private Point4D Composite { get => (Point4D)GetValue(CompositeProperty); set => SetValue(CompositeProperty, value); }
 
         public LiquidGlassEffect()
         {
@@ -139,6 +151,7 @@ namespace Pynelith.Glass.Effects
             UpdateShaderValue(TintBottomProperty);
             UpdateShaderValue(BackdropSizeProperty);
             UpdateShaderValue(BackdropOffsetProperty);
+            UpdateShaderValue(CompositeProperty);
 
             PushUniforms(428, 248, 1.0);
         }
@@ -159,6 +172,7 @@ namespace Pynelith.Glass.Effects
             Shape = new Point4D(CornerRadius * scale, BezelWidth * scale, Thickness * scale, GlassIor);
             Optics = new Point4D(Dispersion, LightAngle, TintAmount,
                 Math.Clamp(SurfaceOpacity, 0, 1));
+            Composite = new Point4D(Math.Clamp(InteriorTintWeight, 0, 1), 0, 0, 0);
         }
 
         private static PixelShader LoadShader()

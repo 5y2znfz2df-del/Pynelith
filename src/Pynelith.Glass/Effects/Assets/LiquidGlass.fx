@@ -6,7 +6,9 @@
 //   3. 真实折射（refract + IOR），位移量 = thickness × (0.35 + 0.65·band)；
 //   4. RGB 色散；
 //   5. 竖向渐变染色（上端近黑 → 下端蓝灰）；
-//   6. 边缘带镜面高光 + 1.8px 轮廓（先压暗再叠亮）。
+//   6. 边缘带镜面高光 + 1.8px 轮廓（先压暗再叠亮）；
+//   7. 录屏兼容（Composite.x=1）：内部只输出染色 alpha，让窗口透出真实桌面，
+//      边缘折射带仍保持不透明 —— 与采样模式的合成结果一致。
 // 编译: fxc /T ps_3_0 /E main /Fo LiquidGlass.gshader LiquidGlass.fx
 
 float2 Resolution     : register(c0);  // 元素尺寸（物理像素）
@@ -17,6 +19,7 @@ float4 TintTop        : register(c4);  // 渐变上端（近黑）
 float4 TintBottom     : register(c5);  // 渐变下端（蓝灰）
 float2 BackdropSize   : register(c6);  // 抓屏图像尺寸
 float2 BackdropOffset : register(c7);  // 元素原点在抓屏图中的偏移
+float4 Composite      : register(c8);  // x=内部染色权重（0=整块折射画面，1=内部透出真实桌面）
 
 sampler InputSampler : register(s0);
 
@@ -113,15 +116,27 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     glass *= 1.0 - rim * 0.10;
     glass += rim * (0.02 + 0.16 * topness);
 
-    float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
+    float coverage = 1.0 - smoothstep(-1.0, 0.0, d);
 
-    // 表面整体不透明度：采样模式为 1（完全由折射画面构成），
-    // 不做屏幕采样的可录制模式会调到 0.88 左右，让桌面透出来。
+    // 表面整体不透明度：采样模式为 1（完全由折射画面构成）。
     float opacity = saturate(Optics.w);
     if (opacity <= 0.001)
     {
         opacity = 1.0;
     }
 
-    return float4(glass * alpha * opacity, alpha * opacity);
+    // 录屏兼容模式：内部不做不透明覆盖，只叠一层染色，真实桌面由窗口自身透出。
+    // 合成结果 = desk*(1-tint) + tint*tint，与采样模式的 lerp(desk, tint, tint) 完全一致。
+    float tintWeight = saturate(Composite.x);
+    float interiorAlpha = lerp(1.0, saturate(Optics.z), tintWeight);
+    float3 interiorColor = lerp(glass, tint.rgb, tintWeight);
+
+    // 边缘折射带保持不透明：折射画面、镜面高光与轮廓都在这一条带里。
+    // 兼容模式把这条带收窄（内部是透出的真实桌面，宽边带会出现一圈"雾面框"）。
+    float bandWidth = lerp(Shape.y * 0.9, Shape.y * 0.35, tintWeight);
+    float edgeBand = 1.0 - smoothstep(0.0, max(bandWidth, 1.0), inward);
+    float3 color = lerp(interiorColor, glass, edgeBand);
+    float surfaceAlpha = coverage * opacity * lerp(interiorAlpha, 1.0, edgeBand);
+
+    return float4(color * surfaceAlpha, surfaceAlpha);
 }

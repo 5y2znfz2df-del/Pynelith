@@ -67,6 +67,14 @@ namespace Pynelith.Glass.Effects
             /// <summary>抓屏余量（DIP）：边缘折射需要采到玻璃外侧的像素。</summary>
             public double CaptureMargin { get; set; } = 120;
 
+            /// <summary>
+            /// 内部是否只输出染色 alpha，让宿主窗口透出真实桌面（录屏兼容模式）。
+            /// 开启后玻璃内部不再用采样画面做不透明覆盖，而是按染色强度半透明，
+            /// 边缘折射带保持不透明，最终合成结果与关闭时一致；
+            /// 关闭（默认）时内部由屏幕采样完全不透明覆盖。
+            /// </summary>
+            public bool TransparentInterior { get; set; }
+
             /// <summary>光源是否跟随鼠标（跟手效果）。</summary>
             public bool LightFollowsCursor { get; set; } = true;
 
@@ -140,6 +148,7 @@ namespace Pynelith.Glass.Effects
                 TintTop = style.TintTop,
                 TintBottom = style.TintBottom,
                 SurfaceOpacity = style.SurfaceOpacity,
+                InteriorTintWeight = style.TransparentInterior ? 1.0 : 0.0,
             };
 
             _surface.Effect = _effect;
