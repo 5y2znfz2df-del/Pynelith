@@ -114,11 +114,14 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     glass *= 1.0 - rim * 0.10;
     glass += rim * (0.02 + 0.16 * topness);
 
-    // 兼容模式（无屏幕采样）的边缘色散：冷紫上缘 + 暖红下缘，
-    // 模拟 RGB 在玻璃边缘的分离；采样模式下由真实折射位移负责，这里为 0。
-    float fringe = pow(1.0 - band, 4.0) * saturate(Extras.x);
-    glass += fringe * (topness * float3(0.10, 0.015, 0.17)
-                     + (1.0 - topness) * float3(0.09, 0.010, 0.02));
+    // 兼容模式（无屏幕采样）的边缘色散：静态度量太平滑，色散采样看不出来，
+    // 因此直接画出两层分离的彩边 —— 最外圈冷蓝紫（短波偏折更大），
+    // 往里一圈暖洋红，形成肉眼可见的 RGB 分离；采样模式由真实折射负责，这里为 0。
+    float chroma = saturate(Extras.x) * (0.40 + 0.60 * topness);
+    float blueCore = pow(1.0 - band, 6.0);
+    float warmHalo = pow(1.0 - band, 2.2) * (1.0 - blueCore);
+    glass += chroma * (blueCore * float3(0.04, 0.10, 0.34)
+                     + warmHalo * float3(0.30, 0.04, 0.12));
 
     float alpha = 1.0 - smoothstep(-1.0, 0.0, d);
 
