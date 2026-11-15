@@ -109,6 +109,12 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float spec = pow(max(dot(g, lightDir), 0.0), 14.0) * pow(edge, 4.0);
     glass += spec * 0.45;
 
+    // Fresnel 边缘反射：法线越侧向反射越强。
+    // 深色/纯色背景下折射没有信息可"掰"，靠这圈冷调窄光才能读出玻璃厚度。
+    // 两种模式共用同一项，观感一致。
+    float fresnel = pow(1.0 - saturate(normal.z), 3.0);
+    glass += fresnel * 0.16 * float3(0.85, 0.92, 1.0);
+
     // 轮廓：只保留 1.2px 的细边，顶部最亮、腰身与底部几乎消失；
     // 先压暗一道（白底上才看得见），再按方位叠高光。
     float rim = 1.0 - smoothstep(0.0, 1.2, inward);
