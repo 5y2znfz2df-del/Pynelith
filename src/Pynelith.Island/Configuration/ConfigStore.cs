@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -35,17 +36,59 @@ namespace Pynelith.Island.Configuration
                 string path = FilePath;
                 if (!File.Exists(path))
                 {
-                    return new IslandConfig();
+                    var fresh = new IslandConfig();
+                    ApplyScreenDefaults(fresh);
+                    return fresh;
                 }
 
                 string json = File.ReadAllText(path, Encoding.UTF8);
-                return JsonSerializer.Deserialize<IslandConfig>(json, Options) ?? new IslandConfig();
+                var config = JsonSerializer.Deserialize<IslandConfig>(json, Options) ?? new IslandConfig();
+                Migrate(config);
+                return config;
             }
             catch (Exception)
             {
                 return new IslandConfig();
             }
         }
+
+        /// <summary>
+        /// 旧版默认值迁移到新规范：高 26→36、宽 200→180、圆角 26→24。
+        /// 只在这些值仍是旧默认时才改，用户自己调过的数值保持不动。
+        /// </summary>
+        private static void Migrate(IslandConfig config)
+        {
+            if (Math.Abs(config.CollapsedHeight - 26) < 0.01)
+            {
+                config.CollapsedHeight = 36;
+            }
+
+            if (Math.Abs(config.ExpandedWidth - 200) < 0.01)
+            {
+                config.ExpandedWidth = 180;
+            }
+
+            if (Math.Abs(config.CornerRadius - 26) < 0.01)
+            {
+                config.CornerRadius = 24;
+            }
+        }
+
+        /// <summary>
+        /// 基准高度 = 主屏高度 × 0.033（1080p ≈ 36，1440p ≈ 48）。
+        /// 只用于首启动默认值，之后由设置里的滑块接管。
+        /// </summary>
+        private static void ApplyScreenDefaults(IslandConfig config)
+        {
+            int screenHeight = GetSystemMetrics(1 /* SM_CYSCREEN */);
+            if (screenHeight > 0)
+            {
+                config.CollapsedHeight = Math.Clamp(Math.Round(screenHeight * 0.033), 32, 52);
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int index);
 
         /// <summary>写入配置（先写临时文件再替换，避免半截文件）。</summary>
         public static void Save(IslandConfig config)

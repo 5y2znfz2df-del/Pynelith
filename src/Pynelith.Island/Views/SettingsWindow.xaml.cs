@@ -314,14 +314,14 @@ namespace Pynelith.Island.Views
             var page = NewPage();
 
             var collapsed = NewGroup(page, "空闲尺寸");
-            AddStepper(collapsed, "宽度", 100, 480, 2, 0,
+            AddStepper(collapsed, "宽度", 120, 240, 2, 0,
                 () => Config.CollapsedWidth, v => Config.CollapsedWidth = v);
-            AddNote(collapsed, "自适应", "实际宽度不会小于内容宽度，避免时间/监控文字被裁切");
-            AddStepper(collapsed, "高度", 20, 96, 1, 0,
+            AddNote(collapsed, "自适应", "120 仅图标 / 180 图标+文字 / 240 长文本上限");
+            AddStepper(collapsed, "高度", 28, 96, 1, 0,
                 () => Config.CollapsedHeight, v => Config.CollapsedHeight = v);
 
             var expanded = NewGroup(page, "媒体尺寸");
-            AddStepper(expanded, "宽度", 160, 900, 4, 0,
+            AddStepper(expanded, "宽度", 120, 240, 4, 0,
                 () => Config.ExpandedWidth, v => Config.ExpandedWidth = v);
             AddNote(expanded, "高度", "始终与空闲态一致，避免遮挡视野");
 

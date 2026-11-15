@@ -13,12 +13,12 @@ namespace Pynelith.Island.Configuration
     {
         private double _globalScale = 1.0;
         private double _collapsedWidth = 180;
-        private double _collapsedHeight = 26;
-        private double _expandedWidth = 200;
+        private double _collapsedHeight = 36;
+        private double _expandedWidth = 180;
         private double _screenOffsetX;
         private double _screenOffsetY;
         private double _glassBlurStrength = 0.62;
-        private double _cornerRadius = 26;
+        private double _cornerRadius = 24;
         private int _animationDurationMs = 280;
         private int _notificationDurationMs = 5000;
         // 保留字段仅为兼容旧配置文件；消息展示不再做任何黑白名单过滤。
@@ -44,25 +44,25 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _globalScale, Math.Clamp(value, 0.5, 2.0));
         }
 
-        /// <summary>收起宽度（DIP，缩放前）。</summary>
+        /// <summary>收起宽度（DIP，缩放前）：120（仅图标）~ 240（长文本上限）。</summary>
         public double CollapsedWidth
         {
             get => _collapsedWidth;
-            set => Set(ref _collapsedWidth, Math.Clamp(value, 100, 480));
+            set => Set(ref _collapsedWidth, Math.Clamp(value, 120, 240));
         }
 
         /// <summary>收起高度（DIP，缩放前）。媒体态高度与它保持一致。</summary>
         public double CollapsedHeight
         {
             get => _collapsedHeight;
-            set => Set(ref _collapsedHeight, Math.Clamp(value, 20, 96));
+            set => Set(ref _collapsedHeight, Math.Clamp(value, 28, 96));
         }
 
         /// <summary>媒体态宽度（DIP，缩放前）。高度始终与空闲态一致，避免遮挡视野。</summary>
         public double ExpandedWidth
         {
             get => _expandedWidth;
-            set => Set(ref _expandedWidth, Math.Clamp(value, 160, 900));
+            set => Set(ref _expandedWidth, Math.Clamp(value, 120, 240));
         }
 
         /// <summary>相对「顶部居中」停靠点的 X 偏移（DIP，正值向右）。</summary>

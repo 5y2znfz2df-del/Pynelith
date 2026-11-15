@@ -921,14 +921,21 @@ namespace Pynelith.Island.Views
             // 用户关掉监控/时间后胶囊会自然收窄，新增内容时又不会被裁切。
             double idleWidth = Math.Max(Config.CollapsedWidth, _idleMinWidth) * scale;
 
+            // 展开面板宽度上限 = 屏幕宽度 × 0.42（1080p ≈ 800px，2K ≈ 1070px），
+            // 同时不小于内容需要的 320。
+            Rect work = SystemParameters.WorkArea;
+            double detailWidth = Math.Min(
+                Math.Max(320 * scale, mediaWidth),
+                Math.Max(240, work.Width * 0.42));
+
             return (
                 idleWidth,
                 idleHeight,
                 mediaWidth,
                 idleHeight,
-                // 展开态是仿 iOS 灵动岛的播放面板：320×146（随全局缩放）
-                Math.Max(320 * scale, mediaWidth),
-                Math.Max(146 * scale, idleHeight));
+                // 展开态是仿 iOS 灵动岛的播放面板：320×140（高度落在规范的 80~140 内）
+                detailWidth,
+                Math.Max(140 * scale, idleHeight));
         }
 
         /// <summary>
@@ -1923,8 +1930,13 @@ namespace Pynelith.Island.Views
         {
             Rect work = SystemParameters.WorkArea;
             double centeredLeft = work.Left + (work.Width - Width) * 0.5;
+            double left = Math.Round(centeredLeft + Config.ScreenOffsetX);
 
-            Left = Math.Round(centeredLeft + Config.ScreenOffsetX);
+            // 安全边距：左右各留 16 DIP，避免拖到屏幕边缘贴框
+            double minLeft = work.Left + 16;
+            double maxLeft = work.Right - Width - 16;
+            Left = maxLeft >= minLeft ? Math.Clamp(left, minLeft, maxLeft) : left;
+
             // 贴屏幕物理顶（y=0，压住顶部任务栏，与参考图一致）；不用 work.Top，避免被推下去
             Top = Math.Round(Config.ScreenOffsetY);
         }
