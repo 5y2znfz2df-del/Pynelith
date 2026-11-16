@@ -903,6 +903,11 @@ namespace Pynelith.Island.Views
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
 
+            // 紧凑态文字随胶囊高度收放：36 高 ≈ 12px，更矮时自动变小，避免字被上下裁切
+            double compactFont = Math.Clamp(Config.CollapsedHeight * 0.34, 7, 12);
+            CompactLyricA.FontSize = compactFont;
+            CompactLyricB.FontSize = compactFont;
+
             Visibility lyricVisibility = Config.LyricsEnabled ? Visibility.Visible : Visibility.Collapsed;
             CompactLyricHost.Visibility = lyricVisibility;
             DetailLyricHost.Visibility = lyricVisibility;

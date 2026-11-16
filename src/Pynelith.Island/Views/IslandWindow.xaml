@@ -400,14 +400,14 @@
 
                     <Grid x:Name="CompactLyricHost" Height="18" Margin="40,0,80,0"
                           VerticalAlignment="Center" ClipToBounds="True">
-                        <TextBlock x:Name="CompactLyricA" FontSize="14"
+                        <TextBlock x:Name="CompactLyricA" FontSize="12"
                                    Foreground="{StaticResource TextPrimary}"
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
                             <TextBlock.RenderTransform>
                                 <TranslateTransform x:Name="CompactLyricATrans"/>
                             </TextBlock.RenderTransform>
                         </TextBlock>
-                        <TextBlock x:Name="CompactLyricB" FontSize="14"
+                        <TextBlock x:Name="CompactLyricB" FontSize="12"
                                    Foreground="{StaticResource TextPrimary}"
                                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0">
                             <TextBlock.RenderTransform>
