@@ -196,6 +196,24 @@ namespace Pynelith.Glass.Effects
         /// <summary>当前是否真正在做屏幕背景采样（其余情况为降级模式）。</summary>
         public bool IsScreenBackdropActive => _screenBackdropActive;
 
+        /// <summary>
+        /// 动态调整采样帧率：静止时降到 8–10fps，形变动画时回到 24fps。
+        /// 抓屏 + 像素处理都在 UI 线程，这是最直接的一处开销削减。
+        /// </summary>
+        public void SetFrameRate(int framesPerSecond)
+        {
+            if (_timer == null)
+            {
+                return;
+            }
+
+            var interval = TimeSpan.FromMilliseconds(1000.0 / Math.Clamp(framesPerSecond, 1, 60));
+            if (Math.Abs((_timer.Interval - interval).TotalMilliseconds) > 1)
+            {
+                _timer.Interval = interval;
+            }
+        }
+
         #region 屏幕采样
 
         private void AttachScreenBackdrop()

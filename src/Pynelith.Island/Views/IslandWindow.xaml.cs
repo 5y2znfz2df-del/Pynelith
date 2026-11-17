@@ -269,6 +269,9 @@ namespace Pynelith.Island.Views
             Reposition();
             _dockGuardActive = true;
 
+            // 静止时玻璃低频采样，形变时再提到 24fps（见 EnsureSpring）
+            _glass?.SetFrameRate(10);
+
             _clockTimer.Start();
             _lyricTimer.Start();
             _topmostTimer.Start();
@@ -1196,6 +1199,9 @@ namespace Pynelith.Island.Views
             {
                 _springRunning = true;
                 _springTimer.Start();
+
+                // 形变期间提高玻璃采样帧率，静止时由 StopSpring 降回去
+                _glass?.SetFrameRate(24);
             }
         }
 
@@ -1208,6 +1214,7 @@ namespace Pynelith.Island.Views
 
             _springRunning = false;
             _springTimer.Stop();
+            _glass?.SetFrameRate(10);
 
             // 让动画结束后的下一次 ApplyMorph 一定把最终形状推给玻璃层
             _lastGlassWidth = -1;

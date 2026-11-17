@@ -139,7 +139,9 @@ namespace Pynelith.Glass.Backdrop
             // 不做横向拉伸，避免把紧贴左右边框的文字/图标拖进面板中间。
             for (int y = 0; y < spanY; y++)
             {
-                double ty = (y + 1.0) / (spanY + 1.0);
+                // 定点权重（0..256）：避免每像素 double 运算与 Math.Round
+                int wBottom = (int)Math.Round((y + 1.0) * 256.0 / (spanY + 1.0));
+                int wTop = 256 - wBottom;
                 int rowStart = y * spanX;
 
                 for (int x = 0; x < spanX; x++)
@@ -147,14 +149,14 @@ namespace Pynelith.Glass.Backdrop
                     int top = _maskTop![x];
                     int bottom = _maskBottom![x];
 
-                    int blue = (int)Math.Round((top & 0xFF) * (1 - ty) + (bottom & 0xFF) * ty);
-                    int green = (int)Math.Round(((top >> 8) & 0xFF) * (1 - ty) + ((bottom >> 8) & 0xFF) * ty);
-                    int red = (int)Math.Round(((top >> 16) & 0xFF) * (1 - ty) + ((bottom >> 16) & 0xFF) * ty);
+                    int blue = ((top & 0xFF) * wTop + (bottom & 0xFF) * wBottom) >> 8;
+                    int green = (((top >> 8) & 0xFF) * wTop + ((bottom >> 8) & 0xFF) * wBottom) >> 8;
+                    int red = (((top >> 16) & 0xFF) * wTop + ((bottom >> 16) & 0xFF) * wBottom) >> 8;
 
                     _maskPixels[rowStart + x] = unchecked((int)0xFF000000)
-                        | (Math.Clamp(red, 0, 255) << 16)
-                        | (Math.Clamp(green, 0, 255) << 8)
-                        | Math.Clamp(blue, 0, 255);
+                        | (red << 16)
+                        | (green << 8)
+                        | blue;
                 }
             }
 
