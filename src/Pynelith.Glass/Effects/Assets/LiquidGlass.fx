@@ -137,24 +137,25 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float interiorAlpha = lerp(1.0, saturate(Optics.z), tintWeight);
     float3 interiorColor = lerp(glass, tint.rgb, tintWeight);
 
-    // 展开面板分区（Composite.y）：上黑下透，中间做竖向渐变。
-    // 整块（含边缘与折射带）都随竖向权重淡出，下半连同边缘一起完全透明；
-    // 收起时 split=0，样式与原玻璃完全一致。
+    // 展开面板分区（Composite.y）：上部 3/4 黑玻璃，下部 1/4 清玻璃。
+    // 清玻璃区压到低透明度，但仍输出折射画面；边缘保留一半亮度的细高光当边框。
     float split = saturate(Composite.y);
-    float vertical = 1.0 - smoothstep(0.28, 0.72, gy);   // 1 = 顶部，0 = 底部
-    float blackTop = split * vertical;
+    float clearRegion = smoothstep(0.70, 0.80, gy) * split;   // 0 上部 → 1 底部 1/4
+    float blackRegion = split * (1.0 - clearRegion);
 
     // 上半区压成黑色玻璃：保留少量折射画面，其余用染色盖住
     float3 blackGlass = lerp(glass, tint.rgb, 0.78);
-    float3 innerColor = lerp(interiorColor, blackGlass, blackTop);
-    float innerAlpha = lerp(interiorAlpha, 1.0, blackTop);
+    float3 innerColor = lerp(interiorColor, blackGlass, blackRegion);
+    float innerAlpha = lerp(interiorAlpha, 1.0, blackRegion);
 
     float edgeBand = 1.0 - smoothstep(0.0, max(Shape.y * 0.9, 1.0), inward);
     float3 color = lerp(innerColor, glass, edgeBand);
     float surfaceAlpha = coverage * opacity * lerp(innerAlpha, 1.0, edgeBand);
 
-    // 竖向淡出：边缘、折射带与轮廓一起透明，下半不会残留一圈光边
-    surfaceAlpha *= lerp(1.0, vertical, split);
+    // 清玻璃：18% 透明底 + 边缘细高光（不再是完全透明，所以能看到折射与边框）
+    float clearAlpha = lerp(0.18, 1.0, edgeBand * 0.5);
+    surfaceAlpha = lerp(surfaceAlpha, coverage * opacity * clearAlpha, clearRegion);
+    color = lerp(color, glass, clearRegion);
 
     return float4(color * surfaceAlpha, surfaceAlpha);
 }
