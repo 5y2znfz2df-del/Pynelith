@@ -137,11 +137,24 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float interiorAlpha = lerp(1.0, saturate(Optics.z), tintWeight);
     float3 interiorColor = lerp(glass, tint.rgb, tintWeight);
 
-    // 边缘折射带保持不透明：折射画面、镜面高光与轮廓都在这一条带里。
-    // 带宽与采样模式一致，保证兼容模式下边缘折射的可见范围不被削弱。
+    // 展开面板分区（Composite.y）：上黑下透，中间做竖向渐变。
+    // 整块（含边缘与折射带）都随竖向权重淡出，下半连同边缘一起完全透明；
+    // 收起时 split=0，样式与原玻璃完全一致。
+    float split = saturate(Composite.y);
+    float vertical = 1.0 - smoothstep(0.28, 0.72, gy);   // 1 = 顶部，0 = 底部
+    float blackTop = split * vertical;
+
+    // 上半区压成黑色玻璃：保留少量折射画面，其余用染色盖住
+    float3 blackGlass = lerp(glass, tint.rgb, 0.78);
+    float3 innerColor = lerp(interiorColor, blackGlass, blackTop);
+    float innerAlpha = lerp(interiorAlpha, 1.0, blackTop);
+
     float edgeBand = 1.0 - smoothstep(0.0, max(Shape.y * 0.9, 1.0), inward);
-    float3 color = lerp(interiorColor, glass, edgeBand);
-    float surfaceAlpha = coverage * opacity * lerp(interiorAlpha, 1.0, edgeBand);
+    float3 color = lerp(innerColor, glass, edgeBand);
+    float surfaceAlpha = coverage * opacity * lerp(innerAlpha, 1.0, edgeBand);
+
+    // 竖向淡出：边缘、折射带与轮廓一起透明，下半不会残留一圈光边
+    surfaceAlpha *= lerp(1.0, vertical, split);
 
     return float4(color * surfaceAlpha, surfaceAlpha);
 }

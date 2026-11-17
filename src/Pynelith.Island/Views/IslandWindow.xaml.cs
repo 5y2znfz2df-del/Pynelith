@@ -85,6 +85,7 @@ namespace Pynelith.Island.Views
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
         private double _lastGlassRadius = -1;
+        private double _lastGlassSplit = -1;
         private bool _glassDirty; // 配置里的玻璃参数变了，下一帧强制推给渲染模块
         private int _glassFrameSkip;
         private long _springStartTicks;
@@ -505,6 +506,7 @@ namespace Pynelith.Island.Views
             _lastGlassWidth = -1;
             _lastGlassHeight = -1;
             _lastGlassRadius = -1;
+            _lastGlassSplit = -1;
             _glassDirty = true;
             _glassFrameSkip = 0;
             ApplyMorph(_p);
@@ -1023,9 +1025,12 @@ namespace Pynelith.Island.Views
             _topArcGeometry.RadiusX = Math.Max(0, radius - 0.5);
             _topArcGeometry.RadiusY = Math.Max(0, radius - 0.5);
 
-            // 未展开时更克制，展开后略微增强
-            CapsuleSheen.Opacity = 0.45 + 0.55 * Math.Clamp(_d, 0, 1);
-            CapsuleHighlight.Opacity = 0.5 + 0.5 * Math.Clamp(_d, 0, 1);
+            // 未展开时更克制，展开后略微增强；
+            // 媒体展开面板的下半区要完全透明，这两层覆盖（顶部柔光 / 底部暗角 / 轮廓弧线）
+            // 也必须一起淡出，否则透明区会残留一层灰雾和一圈亮边。
+            double shellFade = 1.0 - Math.Clamp(mediaDetail, 0, 1);
+            CapsuleSheen.Opacity = (0.45 + 0.55 * Math.Clamp(_d, 0, 1)) * shellFade;
+            CapsuleHighlight.Opacity = (0.5 + 0.5 * Math.Clamp(_d, 0, 1)) * shellFade;
 
             // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
             double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
@@ -1099,10 +1104,15 @@ namespace Pynelith.Island.Views
             double radius = Math.Min(Config.CornerRadius * Config.GlobalScale, shortSide * 0.5);
             double bezel = Math.Min(22 * Config.GlobalScale, shortSide * 0.26);
 
+            // 仅媒体展开态启用「上半黑玻璃 / 下半全透明」分区，随展开进度淡入。
+            // 空闲展开（大时钟）与紧凑态的 _p 为 0，保持原样。
+            double split = Math.Clamp(_d, 0, 1) * Math.Clamp(_p, 0, 1);
+
             if (!force
                 && Math.Abs(width - _lastGlassWidth) < 2.5
                 && Math.Abs(height - _lastGlassHeight) < 2.5
                 && Math.Abs(radius - _lastGlassRadius) < 0.1
+                && Math.Abs(split - _lastGlassSplit) < 0.01
                 && _lastGlassWidth > 0)
             {
                 return;
@@ -1112,6 +1122,7 @@ namespace Pynelith.Island.Views
             _lastGlassWidth = width;
             _lastGlassHeight = height;
             _lastGlassRadius = radius;
+            _lastGlassSplit = split;
 
             // 两种模式共用同一组光学参数：折射、色散、染色与表面不透明度逐项一致
             _glass.Update(effect =>
@@ -1120,6 +1131,7 @@ namespace Pynelith.Island.Views
                 effect.BezelWidth = bezel;
                 effect.Thickness = bezel * 1.35;
                 effect.TintAmount = Config.GlassBlurStrength;
+                effect.PanelSplit = split;
             });
         }
 

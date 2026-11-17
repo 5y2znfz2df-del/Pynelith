@@ -91,6 +91,13 @@ namespace Pynelith.Glass.Effects
         /// </summary>
         public double InteriorTintWeight { get; set; }
 
+        /// <summary>
+        /// 展开面板的分区强度 0..1：0 = 关闭（与普通玻璃一致）；
+        /// 1 = 上半为黑色玻璃、下半完全透明，边缘折射带保持不变。
+        /// 由宿主按展开进度平滑推入，收起时自然回到 0。
+        /// </summary>
+        public double PanelSplit { get; set; }
+
         /// <summary>渐变染色上端（近黑）。</summary>
         public Color TintTop
         {
@@ -172,7 +179,11 @@ namespace Pynelith.Glass.Effects
             Shape = new Point4D(CornerRadius * scale, BezelWidth * scale, Thickness * scale, GlassIor);
             Optics = new Point4D(Dispersion, LightAngle, TintAmount,
                 Math.Clamp(SurfaceOpacity, 0, 1));
-            Composite = new Point4D(Math.Clamp(InteriorTintWeight, 0, 1), 0, 0, 0);
+            Composite = new Point4D(
+                Math.Clamp(InteriorTintWeight, 0, 1),
+                Math.Clamp(PanelSplit, 0, 1),
+                0,
+                0);
         }
 
         private static PixelShader LoadShader()
