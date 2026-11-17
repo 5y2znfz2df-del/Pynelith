@@ -33,6 +33,7 @@ namespace Pynelith.Glass.Backdrop
         private int[]? _maskPixels;
         private int[]? _maskTop;
         private int[]? _maskBottom;
+        private int[]? _maskTemp;
 
         /// <summary>可直接作为 ShaderEffect 采样器输入的画刷（图像随采样更新）。</summary>
         public ImageBrush Brush { get; } = new ImageBrush { Stretch = Stretch.Fill };
@@ -122,6 +123,17 @@ namespace Pynelith.Glass.Backdrop
                 _maskBottom![x] = Marshal.ReadInt32(_bits, bottomY * stride + (x0 + x) * 4);
             }
 
+            // 上下边框各做一次横向均值平滑（±6px）：
+            // 文字/图标这类高频内容不会沿整列被"抽"成一条亮带、一路折射到面板中间，
+            // 10px 以上的条纹与渐变仍能保留。
+            if (_maskTemp == null || _maskTemp.Length < spanX)
+            {
+                _maskTemp = new int[spanX];
+            }
+
+            SmoothRow(_maskTop!, _maskTemp, spanX, 6);
+            SmoothRow(_maskBottom!, _maskTemp, spanX, 6);
+
             // 逐列在「上边框像素 → 下边框像素」之间做纵向插值：
             // 竖条纹、纵向渐变这类背景能被正确延续，边缘折射才有可"掰"的细节；
             // 不做横向拉伸，避免把紧贴左右边框的文字/图标拖进面板中间。
@@ -151,6 +163,38 @@ namespace Pynelith.Glass.Backdrop
                 Marshal.Copy(_maskPixels, y * spanX,
                     IntPtr.Add(_bits, (y0 + y) * stride + x0 * 4), spanX);
             }
+        }
+
+        /// <summary>对一行像素做横向盒式平滑，抑制文字/图标被拉成整列亮带。</summary>
+        private static void SmoothRow(int[] row, int[] scratch, int length, int radius)
+        {
+            if (length <= 1 || radius <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < length; i++)
+            {
+                int from = Math.Max(0, i - radius);
+                int to = Math.Min(length - 1, i + radius);
+                int count = to - from + 1;
+
+                long blue = 0, green = 0, red = 0;
+                for (int j = from; j <= to; j++)
+                {
+                    int color = row[j];
+                    blue += color & 0xFF;
+                    green += (color >> 8) & 0xFF;
+                    red += (color >> 16) & 0xFF;
+                }
+
+                scratch[i] = unchecked((int)0xFF000000)
+                    | ((int)(red / count) << 16)
+                    | ((int)(green / count) << 8)
+                    | (int)(blue / count);
+            }
+
+            Array.Copy(scratch, row, length);
         }
 
         private bool EnsureBuffers(int width, int height)

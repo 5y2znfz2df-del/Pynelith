@@ -148,7 +148,8 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float3 innerColor = lerp(interiorColor, blackGlass, blackRegion);
     float innerAlpha = lerp(interiorAlpha, 1.0, blackRegion);
 
-    float edgeBand = 1.0 - smoothstep(0.0, max(Shape.y * 0.9, 1.0), inward);
+    // 折射带的可见宽度收窄到 0.7×bezel，弯折只贴着边缘，不会一路压到面板中间。
+    float edgeBand = 1.0 - smoothstep(0.0, max(Shape.y * 0.7, 1.0), inward);
     float3 color = lerp(innerColor, glass, edgeBand);
     float surfaceAlpha = coverage * opacity * lerp(innerAlpha, 1.0, edgeBand);
 
