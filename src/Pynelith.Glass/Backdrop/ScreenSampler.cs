@@ -31,8 +31,6 @@ namespace Pynelith.Glass.Backdrop
 
         // 遮罩填充的复用缓冲：按需扩容，避免每帧分配
         private int[]? _maskPixels;
-        private int[]? _maskLeft;
-        private int[]? _maskRight;
         private int[]? _maskTop;
         private int[]? _maskBottom;
 
@@ -84,10 +82,9 @@ namespace Pynelith.Glass.Backdrop
         }
 
         /// <summary>
-        /// 用遮罩四周的像素做「环境色」填充：四条边先各自求平均色，再在遮罩内做平滑的
-        /// 横向/纵向渐变。只保留色调，不保留边框附近的文字与图标结构，
-        /// 所以玻璃内部不会出现内容被拉伸到中心的拖影；
-        /// 边缘折射仍然采样遮罩外的真实桌面像素。
+        /// 用遮罩上下边框的像素做纵向插值填充：
+        /// 保留每列的颜色变化（竖条纹、渐变会被正确延续），边缘折射才有细节可"掰"；
+        /// 不做横向插值，避免把紧贴左右边框的文字拖进面板中间。
         /// </summary>
         private void FillMaskedRegion(int width, int height, Int32Rect mask)
         {
@@ -109,12 +106,6 @@ namespace Pynelith.Glass.Backdrop
                 _maskPixels = new int[count];
             }
 
-            if (_maskLeft == null || _maskLeft.Length < spanY)
-            {
-                _maskLeft = new int[spanY];
-                _maskRight = new int[spanY];
-            }
-
             if (_maskTop == null || _maskTop.Length < spanX)
             {
                 _maskTop = new int[spanX];
@@ -122,15 +113,6 @@ namespace Pynelith.Glass.Backdrop
             }
 
             int stride = width * 4;
-            int leftX = Math.Max(0, x0 - 1);
-            int rightX = Math.Min(width - 1, x1);
-
-            for (int y = 0; y < spanY; y++)
-            {
-                IntPtr row = IntPtr.Add(_bits, (y0 + y) * stride);
-                _maskLeft![y] = Marshal.ReadInt32(row, leftX * 4);
-                _maskRight![y] = Marshal.ReadInt32(row, rightX * 4);
-            }
 
             int topY = Math.Max(0, y0 - 1);
             int bottomY = Math.Min(height - 1, y1);
@@ -140,74 +122,27 @@ namespace Pynelith.Glass.Backdrop
                 _maskBottom![x] = Marshal.ReadInt32(_bits, bottomY * stride + (x0 + x) * 4);
             }
 
-            // 四条边的平均色：只保留环境色调。
-            // 不能逐像素从边框往里插值 —— 那样会把紧贴胶囊的文字/图标一路"拉"进玻璃中心，
-            // 看起来像内容被散射到面板中间。平均色没有高频结构，只会形成一层柔和的环境色。
-            double leftB = 0, leftG = 0, leftR = 0;
-            double rightB = 0, rightG = 0, rightR = 0;
-            for (int y = 0; y < spanY; y++)
-            {
-                int left = _maskLeft![y];
-                int right = _maskRight![y];
-                leftB += left & 0xFF;
-                leftG += (left >> 8) & 0xFF;
-                leftR += (left >> 16) & 0xFF;
-                rightB += right & 0xFF;
-                rightG += (right >> 8) & 0xFF;
-                rightR += (right >> 16) & 0xFF;
-            }
-
-            leftB /= spanY;
-            leftG /= spanY;
-            leftR /= spanY;
-            rightB /= spanY;
-            rightG /= spanY;
-            rightR /= spanY;
-
-            double topB = 0, topG = 0, topR = 0;
-            double bottomB = 0, bottomG = 0, bottomR = 0;
-            for (int x = 0; x < spanX; x++)
-            {
-                int top = _maskTop![x];
-                int bottom = _maskBottom![x];
-                topB += top & 0xFF;
-                topG += (top >> 8) & 0xFF;
-                topR += (top >> 16) & 0xFF;
-                bottomB += bottom & 0xFF;
-                bottomG += (bottom >> 8) & 0xFF;
-                bottomR += (bottom >> 16) & 0xFF;
-            }
-
-            topB /= spanX;
-            topG /= spanX;
-            topR /= spanX;
-            bottomB /= spanX;
-            bottomG /= spanX;
-            bottomR /= spanX;
-
+            // 逐列在「上边框像素 → 下边框像素」之间做纵向插值：
+            // 竖条纹、纵向渐变这类背景能被正确延续，边缘折射才有可"掰"的细节；
+            // 不做横向拉伸，避免把紧贴左右边框的文字/图标拖进面板中间。
             for (int y = 0; y < spanY; y++)
             {
                 double ty = (y + 1.0) / (spanY + 1.0);
-
-                // 纵向是上下两条边的均值插值，横向同理；两者取平均，避免方向偏置
-                double verticalB = topB * (1 - ty) + bottomB * ty;
-                double verticalG = topG * (1 - ty) + bottomG * ty;
-                double verticalR = topR * (1 - ty) + bottomR * ty;
-
                 int rowStart = y * spanX;
 
                 for (int x = 0; x < spanX; x++)
                 {
-                    double tx = (x + 1.0) / (spanX + 1.0);
+                    int top = _maskTop![x];
+                    int bottom = _maskBottom![x];
 
-                    double blue = (leftB * (1 - tx) + rightB * tx + verticalB) * 0.5;
-                    double green = (leftG * (1 - tx) + rightG * tx + verticalG) * 0.5;
-                    double red = (leftR * (1 - tx) + rightR * tx + verticalR) * 0.5;
+                    int blue = (int)Math.Round((top & 0xFF) * (1 - ty) + (bottom & 0xFF) * ty);
+                    int green = (int)Math.Round(((top >> 8) & 0xFF) * (1 - ty) + ((bottom >> 8) & 0xFF) * ty);
+                    int red = (int)Math.Round(((top >> 16) & 0xFF) * (1 - ty) + ((bottom >> 16) & 0xFF) * ty);
 
                     _maskPixels[rowStart + x] = unchecked((int)0xFF000000)
-                        | (Math.Clamp((int)Math.Round(red), 0, 255) << 16)
-                        | (Math.Clamp((int)Math.Round(green), 0, 255) << 8)
-                        | Math.Clamp((int)Math.Round(blue), 0, 255);
+                        | (Math.Clamp(red, 0, 255) << 16)
+                        | (Math.Clamp(green, 0, 255) << 8)
+                        | Math.Clamp(blue, 0, 255);
                 }
             }
 

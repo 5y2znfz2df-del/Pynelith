@@ -107,13 +107,13 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float2 lightDir = float2(cos(Optics.y), sin(Optics.y));
     float edge = 1.0 - band;
     float spec = pow(max(dot(g, lightDir), 0.0), 14.0) * pow(edge, 4.0);
-    glass += spec * 0.45;
+    glass += spec * 0.34;
 
     // Fresnel 边缘反射：法线越侧向反射越强。
     // 深色/纯色背景下折射没有信息可"掰"，靠这圈冷调窄光才能读出玻璃厚度。
     // 两种模式共用同一项，观感一致。
     float fresnel = pow(1.0 - saturate(normal.z), 3.0);
-    glass += fresnel * 0.16 * float3(0.85, 0.92, 1.0);
+    glass += fresnel * 0.10 * float3(0.85, 0.92, 1.0);
 
     // 轮廓：只保留 1.2px 的细边，顶部最亮、腰身与底部几乎消失；
     // 先压暗一道（白底上才看得见），再按方位叠高光。
@@ -140,7 +140,7 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     // 展开面板分区（Composite.y）：上部 3/4 黑玻璃，下部 1/4 清玻璃。
     // 清玻璃区压到低透明度，但仍输出折射画面；边缘保留一半亮度的细高光当边框。
     float split = saturate(Composite.y);
-    float clearRegion = smoothstep(0.70, 0.80, gy) * split;   // 0 上部 → 1 底部 1/4
+    float clearRegion = smoothstep(0.62, 0.82, gy) * split;   // 下部约 1/4，长渐变过渡
     float blackRegion = split * (1.0 - clearRegion);
 
     // 上半区压成黑色玻璃：保留少量折射画面，其余用染色盖住
@@ -152,8 +152,8 @@ float4 main(float2 uv : TEXCOORD) : COLOR
     float3 color = lerp(innerColor, glass, edgeBand);
     float surfaceAlpha = coverage * opacity * lerp(innerAlpha, 1.0, edgeBand);
 
-    // 清玻璃：18% 透明底 + 边缘细高光（不再是完全透明，所以能看到折射与边框）
-    float clearAlpha = lerp(0.18, 1.0, edgeBand * 0.5);
+    // 清玻璃：30% 透明底 + 边缘细高光（不是全透明，所以能看到折射与边框）
+    float clearAlpha = lerp(0.30, 1.0, edgeBand * 0.25);
     surfaceAlpha = lerp(surfaceAlpha, coverage * opacity * clearAlpha, clearRegion);
     color = lerp(color, glass, clearRegion);
 
