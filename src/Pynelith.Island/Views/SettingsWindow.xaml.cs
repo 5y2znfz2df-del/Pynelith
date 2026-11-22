@@ -10,6 +10,7 @@ using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
+using Pynelith.Island.Services.Siri;
 
 namespace Pynelith.Island.Views
 {
@@ -29,6 +30,10 @@ namespace Pynelith.Island.Views
         private readonly ConfigService _service;
         private readonly LyricsService _lyrics;
         private readonly MediaSessionService _media;
+        private readonly NotificationHistoryStore _history;
+        private readonly SiriConfig _siriConfig;
+        private readonly SiriService? _siri;
+        private SiriSpeaker? _previewSpeaker;
         private readonly List<Action> _refreshers = new List<Action>();
         private readonly Dictionary<string, UIElement> _pages = new Dictionary<string, UIElement>();
         private readonly Dictionary<string, Button> _sideButtons = new Dictionary<string, Button>();
@@ -36,13 +41,26 @@ namespace Pynelith.Island.Views
         private string _currentPage = string.Empty;
         private bool _loading;
 
+        /// <summary>系统当前深浅色模式的显示文本。</summary>
+        private string _systemThemeLabel
+            => SystemThemeService.ReadSystemTheme() == SystemThemeMode.Light ? "浅色" : "深色";
+
         private IslandConfig Config => _service.Config;
 
-        public SettingsWindow(ConfigService service, LyricsService lyrics, MediaSessionService media)
+        public SettingsWindow(
+            ConfigService service,
+            LyricsService lyrics,
+            MediaSessionService media,
+            NotificationHistoryStore history,
+            SiriConfig siriConfig,
+            SiriService? siri = null)
         {
             _service = service;
             _lyrics = lyrics;
             _media = media;
+            _history = history;
+            _siriConfig = siriConfig;
+            _siri = siri;
 
             InitializeComponent();
 
@@ -60,6 +78,7 @@ namespace Pynelith.Island.Views
             SelectPage("general");
 
             StateChanged += OnWindowStateChanged;
+            Closed += (_, _) => _previewSpeaker?.Dispose();
         }
 
         #region 窗口外壳（macOS 交通灯）
@@ -144,6 +163,7 @@ namespace Pynelith.Island.Views
                 NewEntry("size", "尺寸与位置", "⇲", LinearGradient("#64D2FF", "#0A84FF")),
                 NewEntry("notify", "通知与提示", "🔔", LinearGradient("#FF6961", "#FF3B30")),
                 NewEntry("music", "音乐", "♫", LinearGradient("#FF6482", "#FF2D55")),
+                NewEntry("siri", "Siri", "◉", LinearGradient("#FF9F0A", "#FF6B00")),
             };
 
             foreach (var entry in entries)
@@ -242,6 +262,7 @@ namespace Pynelith.Island.Views
             _pages["size"] = BuildSizePage();
             _pages["notify"] = BuildNotifyPage();
             _pages["music"] = BuildMusicPage();
+            _pages["siri"] = BuildSiriPage();
         }
 
         private UIElement BuildGeneralPage()
@@ -268,6 +289,14 @@ namespace Pynelith.Island.Views
                 () => Config.Theme, v => Config.Theme = v);
             AddNote(theme, "液态玻璃", "抓屏折射 + 色散，最接近真实玻璃；会占用少量 CPU");
             AddNote(theme, "纯黑 / 磨砂", "静态底色，不做屏幕采样，适合低配机器或省电场景");
+
+            var follow = NewGroup(page, "跟随系统");
+            AddToggle(follow, "深浅色跟随系统",
+                () => Config.FollowSystemTheme, v => Config.FollowSystemTheme = v);
+            AddNote(follow, "当前系统模式", _systemThemeLabel);
+            AddDescription(follow,
+                "开启后，系统切到浅色时纯黑 / 磨砂主题会自动换成浅色底，图标与文字同步反相；"
+                + "液态玻璃本身是抓屏折射，不受此项影响。");
 
             var compat = NewGroup(page, "兼容");
             AddToggle(compat, "兼容模式（截图与录屏可见）",
@@ -331,7 +360,58 @@ namespace Pynelith.Island.Views
             AddStepper(offset, "垂直偏移 Y", -40, 300, 1, 0,
                 () => Config.ScreenOffsetY, v => Config.ScreenOffsetY = v);
 
+            // ---- 多显示器与逐屏 DPI ----
+            var display = NewGroup(page, "显示器");
+            AddDropdown(display, "停靠屏幕", BuildMonitorOptions(),
+                () => Config.MonitorIndex.ToString(),
+                v => Config.MonitorIndex = int.TryParse(v, out int index) ? index : -1);
+
+            foreach (var monitor in MonitorService.GetMonitors())
+            {
+                AddNote(display, DescribeMonitor(monitor), DescribeMonitorDetail(monitor));
+            }
+
+            AddDescription(display,
+                "多屏环境下可以指定岛停在哪一块屏上；混合缩放（如主屏 100% + 副屏 150%）时，"
+                + "岛会按目标屏自己的 DPI 计算位置与抓屏采样，不会出现错位。");
+
             return page;
+        }
+
+        /// <summary>显示器下拉选项：自动 + 每一块屏。</summary>
+        private static (string Key, string Name)[] BuildMonitorOptions()
+        {
+            var options = new List<(string, string)>
+            {
+                ("-1", "自动（跟随当前屏幕）"),
+            };
+
+            var monitors = MonitorService.GetMonitors();
+            for (int i = 0; i < monitors.Count; i++)
+            {
+                var monitor = monitors[i];
+                string label = $"屏幕 {i + 1}";
+                if (monitor.IsPrimary)
+                {
+                    label += "（主屏）";
+                }
+
+                options.Add((i.ToString(), label));
+            }
+
+            return options.ToArray();
+        }
+
+        private static string DescribeMonitor(MonitorInfo monitor)
+        {
+            string label = monitor.IsPrimary ? "主屏" : "副屏";
+            return $"{label} · 缩放 {Math.Round(monitor.DpiScale * 100)}%";
+        }
+
+        private static string DescribeMonitorDetail(MonitorInfo monitor)
+        {
+            var work = monitor.WorkArea;
+            return $"{Math.Round(work.Width)} × {Math.Round(work.Height)} DIP";
         }
 
         private UIElement BuildNotifyPage()
@@ -372,7 +452,112 @@ namespace Pynelith.Island.Views
             AddNote(display, "过滤规则", "无黑白名单：所有系统通知都会展示");
             AddNote(display, "授权", "若列表为空，请在上方打开「通知访问」允许 Pynelith 读取通知");
 
+            // ---- 通知历史：按应用分组 ----
+            var history = NewGroup(page, "通知历史");
+            AddNote(history, "保存位置", NotificationHistoryStore.FilePath);
+            AddNote(history, "保留策略", $"最近 {NotificationHistoryStore.MaxEntries} 条，{NotificationHistoryStore.MaxAge.Days} 天内有效");
+            AddNote(history, "分组方式", "按应用分组，同一应用的多条通知收在一起");
+
+            var historyHost = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
+            history.Children.Add(historyHost);
+
+            var clearButton = new Button
+            {
+                Content = "清空历史",
+                Cursor = Cursors.Hand,
+                Foreground = TextPrimary,
+                FontSize = 12,
+                Padding = new Thickness(14, 5, 14, 5),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(14, 6, 14, 0),
+            };
+            clearButton.Click += (_, _) => _history.Clear();
+            history.Children.Add(clearButton);
+
+            void RefreshHistory()
+            {
+                historyHost.Children.Clear();
+
+                var groups = _history.Groups;
+                if (groups.Count == 0)
+                {
+                    historyHost.Children.Add(new TextBlock
+                    {
+                        Text = "暂无历史通知",
+                        FontSize = 11.5,
+                        Foreground = TextSecondary,
+                        Margin = new Thickness(14, 6, 14, 6),
+                    });
+                    return;
+                }
+
+                foreach (var group in groups)
+                {
+                    historyHost.Children.Add(BuildHistoryGroup(group));
+                }
+            }
+
+            RefreshHistory();
+            _refreshers.Add(RefreshHistory);
+            _history.Changed += (_, _) => Dispatcher.BeginInvoke(RefreshHistory);
+
             return page;
+        }
+
+        /// <summary>历史里的一个应用分组：应用名 + 条数，下方列出该应用的每条通知。</summary>
+        private static UIElement BuildHistoryGroup(NotificationGroup group)
+        {
+            var container = new StackPanel { Margin = new Thickness(14, 8, 14, 0) };
+
+            var header = new Grid();
+            var name = new TextBlock
+            {
+                Text = group.AppName,
+                FontSize = 12.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = TextPrimary,
+            };
+            header.Children.Add(name);
+
+            var count = new TextBlock
+            {
+                Text = group.Items.Count + " 条",
+                FontSize = 11,
+                Foreground = TextSecondary,
+                HorizontalAlignment = HorizontalAlignment.Right,
+            };
+            header.Children.Add(count);
+
+            container.Children.Add(header);
+
+            foreach (var item in group.Items)
+            {
+                var row = new Grid { Margin = new Thickness(0, 5, 0, 0) };
+
+                var time = new TextBlock
+                {
+                    Text = item.TimeText,
+                    FontSize = 10.5,
+                    Foreground = TextSecondary,
+                    Width = 40,
+                    VerticalAlignment = VerticalAlignment.Top,
+                };
+                row.Children.Add(time);
+
+                var text = new TextBlock
+                {
+                    Text = item.FullText,
+                    FontSize = 11.5,
+                    Foreground = TextPrimary,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(44, 0, 0, 0),
+                };
+                row.Children.Add(text);
+
+                container.Children.Add(row);
+            }
+
+            return container;
         }
 
         private UIElement BuildMusicPage()
@@ -400,7 +585,174 @@ namespace Pynelith.Island.Views
             AddNote(control, "可用操作", "播放 / 暂停、上一首、下一首；点击岛本体 = 展开详情");
             AddNote(control, "显示时机", "仅在检测到正在播放的会话时出现；播放器退出后自动回到待机");
 
+            var align = NewGroup(page, "进度对齐");
+            AddDropdown(align, "音频版本预设", BuildPresetOptions(),
+                () => Config.ProgressOffsetPresetId,
+                v => Config.ProgressOffsetPresetId = v);
+            AddNote(align, "当前播放器", _media.Profile.DisplayName);
+            AddNote(align, "进度来源", _media.IsPositionEstimated
+                ? "推算值（该播放器不上报进度）"
+                : "播放器上报的真实进度");
+            AddNote(align, "预设作用", "不同音频版本的开头长度不同，预设会把进度整体平移，歌词与进度条同步修正");
+            AddDescription(align,
+                "网易云音乐的 SMTC 时间轴恒为 0：Pynelith 改用播放器窗口标题变化来捕捉换歌时刻，"
+                + "比元数据事件更准。若仍有几十毫秒误差，用右键「歌词提前 / 延后 200ms」微调即可。");
+
             return page;
+        }
+
+        /// <summary>
+        /// Siri 语音助手组件设置页。
+        /// 组件的全部参数都在这里：唤醒、麦克风、对话 API、语音转文字、性能与唤起方式。
+        /// 程序不内置任何密钥或中转地址，API 区全部由用户自行填写。
+        /// </summary>
+        private UIElement BuildSiriPage()
+        {
+            var page = NewPage();
+
+            var master = NewGroup(page, "组件");
+            AddToggle(master, "启用 Siri 组件",
+                () => _siriConfig.Enabled, v => _siriConfig.Enabled = v);
+            AddDescription(master,
+                "关闭后不加载唤醒模型、不占用麦克风、不监听快捷键，配置原样保留；"
+                + "总开关变更需要重启 Pynelith 才会生效。");
+
+            var wake = NewGroup(page, "语音唤醒");
+            AddToggle(wake, "后台语音唤醒",
+                () => _siriConfig.VoiceWakeEnabled, v => _siriConfig.VoiceWakeEnabled = v);
+            AddTextBox(wake, "唤醒词",
+                () => _siriConfig.WakeWord, v => _siriConfig.WakeWord = v);
+            AddMicDropdown(wake);
+            AddStepper(wake, "唤醒灵敏度", 0, 1, 0.05, 2,
+                () => _siriConfig.WakeSensitivity, v => _siriConfig.WakeSensitivity = v);
+            AddDescription(wake,
+                "灵敏度越高越容易触发，也更容易误唤醒。关掉语音唤醒后，"
+                + "仍可用全局快捷键或点击胶囊唤起 Siri。");
+
+            var chat = NewGroup(page, "回复播报");
+            AddToggle(chat, "朗读 Siri 的回复",
+                () => _siriConfig.SpeakReplies, v => _siriConfig.SpeakReplies = v);
+            AddDropdown(chat, "音色",
+                new[]
+                {
+                    ("zh-CN-XiaoxiaoNeural", "晓晓 · 女声（推荐，最接近 Siri）"),
+                    ("zh-CN-XiaoyiNeural", "晓伊 · 女声（清亮）"),
+                    ("zh-CN-YunxiNeural", "云希 · 男声（年轻）"),
+                    ("zh-CN-YunyangNeural", "云扬 · 男声（沉稳）"),
+                    (SiriSpeaker.SystemVoice, "系统语音（离线）"),
+                },
+                () => _siriConfig.SpeechVoice, v => _siriConfig.SpeechVoice = v);
+            AddStepper(chat, "语速 (%)", -50, 50, 5, 0,
+                () => _siriConfig.SpeechRate, v => _siriConfig.SpeechRate = (int)Math.Round(v));
+            AddButton(chat, "试听音色", OnPreviewSpeech);
+            AddDescription(chat,
+                "回复生成完成后自动朗读。在线音色使用微软神经网络语音（与 Edge 浏览器「大声朗读」同源），"
+                + "无需密钥；断网或合成失败时自动改用系统离线语音，不会哑火。"
+                + "重新提问、点停止或收起胶囊都会立即打断播报。");
+
+            var chatApi = NewGroup(page, "对话 API");
+            AddPasswordBox(chatApi, "API Key",
+                () => _siriConfig.ChatApiKey, v => _siriConfig.ChatApiKey = v);
+            AddTextBox(chatApi, "Base URL",
+                () => _siriConfig.ChatBaseUrl, v => _siriConfig.ChatBaseUrl = v);
+            AddTextBox(chatApi, "模型名称",
+                () => _siriConfig.ChatModel, v => _siriConfig.ChatModel = v);
+            AddStepper(chatApi, "上下文轮数", 0, 100, 1, 0,
+                () => _siriConfig.ContextLimit, v => _siriConfig.ContextLimit = (int)Math.Round(v));
+            AddDescription(chatApi,
+                "兼容 OpenAI 协议的 /chat/completions 流式接口。"
+                + "程序不内置任何密钥与中转地址，全部由你自行填写。");
+
+            var asr = NewGroup(page, "语音转文字 (ASR)");
+            AddPasswordBox(asr, "API Key",
+                () => _siriConfig.AsrApiKey, v => _siriConfig.AsrApiKey = v);
+            AddTextBox(asr, "Base URL",
+                () => _siriConfig.AsrBaseUrl, v => _siriConfig.AsrBaseUrl = v);
+            AddTextBox(asr, "模型名称",
+                () => _siriConfig.AsrModel, v => _siriConfig.AsrModel = v);
+            AddDescription(asr,
+                "留空则复用上方对话 API 的地址与 Key。要求 /audio/transcriptions 接口兼容 OpenAI 协议。");
+
+            var perf = NewGroup(page, "性能");
+            AddToggle(perf, "低配 GPU 模式",
+                () => _siriConfig.LowGpuMode, v => _siriConfig.LowGpuMode = v);
+            AddDescription(perf,
+                "一键关闭透镜的实时折射与色散（不再抓取桌面背景），只保留光带与文字，降低显存占用；"
+                + "重启后生效，适合 MX330 这类低配显卡。");
+
+            var keys = NewGroup(page, "唤起方式");
+            AddToggle(keys, "全局快捷键",
+                () => _siriConfig.HotkeyEnabled, v => _siriConfig.HotkeyEnabled = v);
+            AddTextBox(keys, "快捷键",
+                () => _siriConfig.Hotkey, v => _siriConfig.Hotkey = v);
+            AddNote(keys, "格式示例", "Ctrl+Alt+S / Win+Shift+A / F9");
+            AddNote(keys, "注册状态", _siri?.HotkeyStatus ?? "组件已关闭");
+            AddNote(keys, "配置文件", SiriConfig.ConfigPath);
+            AddButton(keys, "清空对话记录", OnClearSiriHistory);
+            AddDescription(keys,
+                "除快捷键外，点击胶囊右端的光点也能唤起 Siri；按一次开始收音，再按一次结束并转写。"
+                + "快捷键变更后重启 Pynelith 生效；若注册状态显示被占用，换一个组合即可。");
+
+            return page;
+        }
+
+        /// <summary>麦克风下拉：系统默认设备 + 当前可用的采集设备。</summary>
+        private void AddMicDropdown(StackPanel rows)
+        {
+            var options = new List<(string, string)>
+            {
+                (string.Empty, "系统默认设备"),
+            };
+
+            foreach (string device in AudioCaptureService.ListDevices())
+            {
+                options.Add((device, device));
+            }
+
+            AddDropdown(rows, "麦克风", options.ToArray(),
+                () => _siriConfig.MicrophoneDevice, v => _siriConfig.MicrophoneDevice = v);
+        }
+
+        /// <summary>试听当前音色：优先用组件自带的播报器，组件关闭时临时建一个。</summary>
+        private void OnPreviewSpeech()
+        {
+            SiriSpeaker speaker = _siri?.Speaker ?? (_previewSpeaker ??= new SiriSpeaker());
+            speaker.Stop();
+            speaker.Speak("你好，我是派尼利斯。这是当前的播报音色，可以随时在设置里更换。",
+                _siriConfig.SpeechVoice, _siriConfig.SpeechRate);
+        }
+
+        private void OnClearSiriHistory()
+        {
+            if (_siri != null)
+            {
+                _siri.ClearHistory();
+            }
+            else
+            {
+                var store = new SiriChatStore();
+                store.Load();
+                store.Clear();
+            }
+
+            MessageBox.Show(this, "对话记录已清空。", "Pynelith",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>进度对齐预设的下拉选项（内置预设 + 「不套用」）。</summary>
+        private static (string Key, string Name)[] BuildPresetOptions()
+        {
+            var options = new List<(string, string)>
+            {
+                (string.Empty, "不套用预设"),
+            };
+
+            foreach (var preset in PlayerOffsetPresets.BuiltIn)
+            {
+                options.Add((preset.Id, preset.DisplayName));
+            }
+
+            return options.ToArray();
         }
 
         private void OnImportLrc()
@@ -737,6 +1089,150 @@ namespace Pynelith.Island.Views
             row.Children.Add(noteText);
         }
 
+        /// <summary>单行文本输入（右侧圆角输入框），失焦前实时写回。</summary>
+        private void AddTextBox(StackPanel rows, string label, Func<string> read, Action<string> write)
+        {
+            var row = NewRow(rows, label);
+
+            var box = new TextBox
+            {
+                Width = 210,
+                FontSize = 12,
+                Foreground = TextPrimary,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                CaretBrush = Brushes.White,
+                Padding = new Thickness(8, 0, 8, 0),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            box.TextChanged += (_, _) =>
+            {
+                if (!_loading)
+                {
+                    write(box.Text);
+                }
+            };
+
+            var frame = new Border
+            {
+                Height = 26,
+                CornerRadius = new CornerRadius(6),
+                Background = FieldBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = box,
+            };
+
+            Grid.SetColumn(frame, 1);
+            row.Children.Add(frame);
+
+            _refreshers.Add(() => box.Text = read());
+        }
+
+        /// <summary>密钥输入（掩码显示），与文本输入共用同一套外观。</summary>
+        private void AddPasswordBox(StackPanel rows, string label, Func<string> read, Action<string> write)
+        {
+            var row = NewRow(rows, label);
+
+            var box = new PasswordBox
+            {
+                Width = 210,
+                FontSize = 12,
+                Foreground = TextPrimary,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                CaretBrush = Brushes.White,
+                Padding = new Thickness(8, 0, 8, 0),
+                VerticalContentAlignment = VerticalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            box.PasswordChanged += (_, _) =>
+            {
+                if (!_loading)
+                {
+                    write(box.Password);
+                }
+            };
+
+            var frame = new Border
+            {
+                Height = 26,
+                CornerRadius = new CornerRadius(6),
+                Background = FieldBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = box,
+            };
+
+            Grid.SetColumn(frame, 1);
+            row.Children.Add(frame);
+
+            _refreshers.Add(() => box.Password = read());
+        }
+
+        /// <summary>
+        /// 下拉选择器：一组互斥选项，选中项即当前值。
+        /// 用于「进度对齐预设」这类有若干候选项的设置。
+        /// </summary>
+        private void AddDropdown(
+            StackPanel rows,
+            string label,
+            (string Key, string Name)[] options,
+            Func<string> read,
+            Action<string> write)
+        {
+            var row = NewRow(rows, label);
+
+            var combo = new ComboBox
+            {
+                MinWidth = 150,
+                FontSize = 12,
+                Style = (Style)FindResource("DarkCombo"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            foreach (var option in options)
+            {
+                combo.Items.Add(new ComboBoxItem { Content = option.Name, Tag = option.Key });
+            }
+
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (_loading)
+                {
+                    return;
+                }
+
+                if (combo.SelectedItem is ComboBoxItem item && item.Tag is string key)
+                {
+                    write(key);
+                }
+            };
+
+            Grid.SetColumn(combo, 1);
+            row.Children.Add(combo);
+
+            void Refresh()
+            {
+                string current = read();
+                foreach (var item in combo.Items)
+                {
+                    if (item is ComboBoxItem entry && entry.Tag is string key
+                        && string.Equals(key, current, StringComparison.Ordinal))
+                    {
+                        combo.SelectedItem = entry;
+                        return;
+                    }
+                }
+
+                combo.SelectedIndex = -1;
+            }
+
+            Refresh();
+            _refreshers.Add(Refresh);
+        }
+
         /// <summary>开关下方的整行说明文字（不占行标题列，与系统设置的分组说明一致）。</summary>
         private void AddDescription(StackPanel rows, string text)
         {
@@ -756,7 +1252,16 @@ namespace Pynelith.Island.Views
         private void OnReset(object sender, MouseButtonEventArgs e)
         {
             _loading = true;
-            Config.ResetToDefaults();
+
+            // 「恢复默认设置」只重置当前分页所属的配置，避免在 Siri 页把岛的主题一起清掉。
+            if (_currentPage == "siri")
+            {
+                _siriConfig.ResetToDefaults();
+            }
+            else
+            {
+                Config.ResetToDefaults();
+            }
 
             foreach (Action refresh in _refreshers)
             {
@@ -769,6 +1274,7 @@ namespace Pynelith.Island.Views
         protected override void OnClosed(EventArgs e)
         {
             _service.SaveNow();
+            _siriConfig.Save();
             base.OnClosed(e);
         }
     }

@@ -67,6 +67,7 @@ namespace Pynelith.Island.Services.Lyrics
                 return null;
             }
 
+            // ---- 优先取逐字歌词（YRC），没有再退回逐行歌词（LRC） ----
             string lyricUrl = $"https://music.163.com/api/song/lyric?id={songId}&lv=-1&kv=-1&tv=-1";
             string? lyricJson = await LyricsHttp.GetAsync(lyricUrl, Referer, ct);
             if (lyricJson == null)
@@ -75,6 +76,18 @@ namespace Pynelith.Island.Services.Lyrics
             }
 
             using JsonDocument lyricDoc = JsonDocument.Parse(lyricJson);
+
+            // YRC（逐字）：[起始ms,时长ms](字起始ms,字时长ms,0)字…
+            if (lyricDoc.RootElement.TryGetProperty("yrc", out JsonElement yrc)
+                && yrc.TryGetProperty("lyric", out JsonElement yrcLyric))
+            {
+                string? text = yrcLyric.GetString();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
+            }
+
             if (lyricDoc.RootElement.TryGetProperty("lrc", out JsonElement lrc)
                 && lrc.TryGetProperty("lyric", out JsonElement lyric))
             {

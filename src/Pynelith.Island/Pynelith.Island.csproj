@@ -19,6 +19,9 @@
     <!-- 压缩只在独立发布时受支持；框架依赖发布走默认（未压缩）单文件 -->
     <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- 开机自启要快：发布时预编译（ReadyToRun），把首次启动的 JIT 开销换成磁盘上的本机代码。
+         只影响发布产物，日常 dotnet build 不受影响。 -->
+    <PublishReadyToRun>true</PublishReadyToRun>
     <Description>灵动岛本体模块：时钟与 CPU/内存监控、悬浮动态岛、停靠定位、展开/收起动画、媒体与歌词、设置窗口与 JSON 配置（玻璃效果全部委托 Pynelith.Glass）</Description>
   </PropertyGroup>
 
@@ -27,12 +30,29 @@
     <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
   </ItemGroup>
 
+  <!-- Siri 组件的第三方依赖：
+       NAudio —— 麦克风采集（WASAPI / MMDevice 设备枚举、录音转 WAV）；
+       Vosk —— 离线唤醒词识别（本地小模型，无需联网、无需 API 额度）。
+       两者都只在用户启用 Siri 组件时才真正被加载。 -->
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Vosk" Version="0.3.38" />
+    <!-- 系统离线语音：在线神经网络语音失败时兜底播报 -->
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
   <!-- 字体：苹方 SC 子集（GB2312 + 拉丁，正文中黑 / 标题粗体）。
        作为 WPF 资源嵌入，pack URI 引用，用户无需额外安装。
        苹方是 Apple Inc. 的授权字体；分发授权由项目维护者提供，详见 README / LICENSE。 -->
   <ItemGroup>
     <Resource Include="Fonts\PingFangSC-Regular.ttf" />
     <Resource Include="Fonts\PingFangSC-Bold.ttf" />
+  </ItemGroup>
+
+  <!-- 开机 / 解锁欢迎动画素材：彩虹手写 "hello" 精灵图。
+       纵向排列，每帧固定行高，运行时按行切帧逐帧播放。 -->
+  <ItemGroup>
+    <Resource Include="Assets\Intro\hello.png" />
   </ItemGroup>
 
   <!-- 托盘图标：与 exe 图标同一份 ICO，按托盘小图标尺寸（16/24/32）挑选帧 -->

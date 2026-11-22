@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,20 +16,52 @@ namespace Pynelith.Glass.Backdrop
     /// 注意：**不做任何模糊**（模糊是亚克力的特征，会让玻璃失去透亮感）。
     /// 抓取区域会比玻璃本身四周各外扩一段余量，供边缘折射采样外部像素。
     ///
-    /// 性能：复用 DIB 段与 DIB DC，每帧仅一次内存拷贝。
+    /// 线程模型（关键）：
+    /// 抓屏是整个形变动画里最重的一步 —— BitBlt 会同步 DWM，耗时随桌面活动剧烈波动，
+    /// 放在 UI 线程上就会把形变动画的某一帧拉长到 35ms 以上。
+    /// 因此采样整体搬到独立的工作线程：
+    /// - 工作线程：BitBlt + 遮罩填充 + 拷进托管缓冲，全程不碰任何 WPF 对象；
+    /// - UI 线程：只把已完成的帧拷进 WriteableBitmap（一次 memcpy）并触发合成。
+    /// 抓屏再慢也只会让画面晚一帧更新，不会拉长 UI 线程上的动画帧。
+    ///
+    /// 请求合并：工作线程只处理最新的一次请求，抓屏慢时自动降帧而不是排队堆积。
     /// </summary>
     internal sealed class ScreenSampler : IDisposable
     {
+        private readonly object _gate = new object();
+        private readonly List<byte[]> _freeBuffers = new List<byte[]>(4);
+        private readonly ManualResetEventSlim _wake = new ManualResetEventSlim(false);
+
+        private Thread? _worker;
+        private bool _disposed;
+
+        // ---- 采样请求（UI 线程写入，工作线程读取；新请求覆盖旧请求） ----
+        private bool _hasRequest;
+        private int _reqX;
+        private int _reqY;
+        private int _reqWidth;
+        private int _reqHeight;
+        private Int32Rect _reqMask;
+
+        // ---- 帧交接（工作线程写入，UI 线程取走） ----
+        private byte[]? _readyBuffer;
+        private int _readyWidth;
+        private int _readyHeight;
+        private bool _hasReady;
+
+        // ---- GDI 资源：仅工作线程使用 ----
         private IntPtr _screenDc;
         private IntPtr _memDc;
         private IntPtr _dib;
         private IntPtr _oldDib;
         private IntPtr _bits;
+        private int _dibWidth;
+        private int _dibHeight;
 
+        // ---- 位图与画刷：仅 UI 线程使用 ----
         private WriteableBitmap? _bitmap;
-        private int _width;
-        private int _height;
-        private bool _disposed;
+        private int _bitmapWidth;
+        private int _bitmapHeight;
 
         // 遮罩填充的复用缓冲：按需扩容，避免每帧分配
         private int[]? _maskPixels;
@@ -38,23 +72,260 @@ namespace Pynelith.Glass.Backdrop
         /// <summary>可直接作为 ShaderEffect 采样器输入的画刷（图像随采样更新）。</summary>
         public ImageBrush Brush { get; } = new ImageBrush { Stretch = Stretch.Fill };
 
+        public ScreenSampler()
+        {
+            _worker = new Thread(WorkerLoop)
+            {
+                IsBackground = true,
+                Name = "Pynelith.Glass.Sampler",
+                // 采样线程优先级略低于 UI：宁可晚一帧出图，也不要抢形变动画的时间片。
+                Priority = ThreadPriority.BelowNormal,
+            };
+            _worker.Start();
+        }
+
         /// <summary>
-        /// 抓取屏幕物理像素区域。坐标须为屏幕设备像素（与 GetWindowRect 一致）。
+        /// 请求一次抓屏（UI 线程调用）。
+        /// 坐标须为屏幕设备像素（与 GetWindowRect 一致）。
         /// <paramref name="mask"/> 为抓屏图内的遮罩矩形（设备像素）：该区域会被四周像素
         /// 平滑填充，用于「窗口未被排除出捕获」时抹掉玻璃自身，避免自采样反馈。
-        /// 返回 false 表示抓取失败（保持上一帧内容）。
+        ///
+        /// 请求会被合并：抓屏慢时自动降帧，不会堆积成延迟越来越大的队列。
         /// </summary>
-        public bool Capture(int screenX, int screenY, int width, int height, Int32Rect mask)
+        public void Request(int screenX, int screenY, int width, int height, Int32Rect mask)
         {
             if (_disposed || width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _reqX = screenX;
+                _reqY = screenY;
+                _reqWidth = width;
+                _reqHeight = height;
+                _reqMask = mask;
+                _hasRequest = true;
+            }
+
+            _wake.Set();
+        }
+
+        /// <summary>
+        /// 把工作线程已完成的帧拷进位图（UI 线程调用）。
+        /// 返回 true 表示这一拍有新帧进入着色器。
+        /// </summary>
+        public bool TryUpload()
+        {
+            byte[]? buffer;
+            int width;
+            int height;
+
+            lock (_gate)
+            {
+                if (!_hasReady)
+                {
+                    return false;
+                }
+
+                _hasReady = false;
+                buffer = _readyBuffer;
+                _readyBuffer = null;
+                width = _readyWidth;
+                height = _readyHeight;
+            }
+
+            if (buffer == null)
             {
                 return false;
             }
 
-            if (!EnsureBuffers(width, height))
+            try
             {
-                return false;
+                EnsureBitmap(width, height);
+                if (_bitmap == null)
+                {
+                    return false;
+                }
+
+                // 走 IntPtr 重载：bufferSize 与 stride 的单位明确是字节，
+                // 不会出现"传的是像素数还是字节数"的歧义。
+                GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                try
+                {
+                    _bitmap.WritePixels(
+                        new Int32Rect(0, 0, width, height),
+                        handle.AddrOfPinnedObject(),
+                        width * height * 4,
+                        width * 4);
+                }
+                finally
+                {
+                    handle.Free();
+                }
+
+                return true;
             }
+            finally
+            {
+                RecycleBuffer(buffer);
+            }
+        }
+
+        #region 工作线程
+
+        private void WorkerLoop()
+        {
+            try
+            {
+                while (true)
+                {
+                    _wake.Wait();
+                    if (_disposed)
+                    {
+                        break;
+                    }
+
+                    // 一轮唤醒可能对应多次请求（期间又来了新请求），全部处理掉。
+                    while (true)
+                    {
+                        // Reset 放在读取请求之前：避免"刚 Set 就被 Reset"把唤醒吃掉。
+                        _wake.Reset();
+
+                        int x;
+                        int y;
+                        int width;
+                        int height;
+                        Int32Rect mask;
+
+                        lock (_gate)
+                        {
+                            if (!_hasRequest)
+                            {
+                                break;
+                            }
+
+                            _hasRequest = false;
+                            x = _reqX;
+                            y = _reqY;
+                            width = _reqWidth;
+                            height = _reqHeight;
+                            mask = _reqMask;
+                        }
+
+                        Capture(x, y, width, height, mask);
+                    }
+                }
+            }
+            finally
+            {
+                ReleaseDib();
+                if (_screenDc != IntPtr.Zero)
+                {
+                    NativeMethods.ReleaseDC(IntPtr.Zero, _screenDc);
+                    _screenDc = IntPtr.Zero;
+                }
+            }
+        }
+
+        private void Capture(int screenX, int screenY, int width, int height, Int32Rect mask)
+        {
+            if (!EnsureDib(width, height))
+            {
+                return;
+            }
+
+            // CAPTUREBLT 让分层窗口参与合成；抓屏排斥由 WDA_EXCLUDEFROMCAPTURE 控制。
+            if (!NativeMethods.BitBlt(_memDc, 0, 0, width, height, _screenDc, screenX, screenY,
+                                      NativeMethods.SRCCOPY | NativeMethods.CAPTUREBLT))
+            {
+                return;
+            }
+
+            if (mask.Width > 0 && mask.Height > 0)
+            {
+                FillMaskedRegion(width, height, mask);
+            }
+
+            int stride = width * 4;
+            int size = stride * height;
+
+            byte[] buffer = RentBuffer(size);
+            Marshal.Copy(_bits, buffer, 0, size);
+
+            byte[]? dropped = null;
+            lock (_gate)
+            {
+                dropped = _readyBuffer;
+                _readyBuffer = buffer;
+                _readyWidth = width;
+                _readyHeight = height;
+                _hasReady = true;
+            }
+
+            // UI 线程还没来得及取走的旧帧直接丢弃：宁可少一帧，也不要延迟累积。
+            if (dropped != null)
+            {
+                RecycleBuffer(dropped);
+            }
+        }
+
+        /// <summary>从缓冲池取一块足够大的托管缓冲（工作线程）。</summary>
+        private byte[] RentBuffer(int size)
+        {
+            lock (_gate)
+            {
+                for (int i = _freeBuffers.Count - 1; i >= 0; i--)
+                {
+                    if (_freeBuffers[i].Length >= size)
+                    {
+                        byte[] pooled = _freeBuffers[i];
+                        _freeBuffers.RemoveAt(i);
+                        return pooled;
+                    }
+                }
+            }
+
+            return new byte[size];
+        }
+
+        /// <summary>把用完的缓冲放回池中。</summary>
+        private void RecycleBuffer(byte[] buffer)
+        {
+            lock (_gate)
+            {
+                if (_freeBuffers.Count < 4)
+                {
+                    _freeBuffers.Add(buffer);
+                }
+            }
+        }
+
+        private bool EnsureDib(int width, int height)
+        {
+            if (_memDc != IntPtr.Zero && _dibWidth == width && _dibHeight == height)
+            {
+                return true;
+            }
+
+            ReleaseDib();
+
+            var bmi = new NativeMethods.BITMAPINFOHEADER
+            {
+                biSize = 40,
+                biWidth = width,
+                biHeight = -height,
+                biPlanes = 1,
+                biBitCount = 32,
+                biCompression = (int)NativeMethods.BI_RGB,
+                biSizeImage = width * height * 4,
+            };
 
             if (_screenDc == IntPtr.Zero)
             {
@@ -65,22 +336,64 @@ namespace Pynelith.Glass.Backdrop
                 }
             }
 
-            // CAPTUREBLT 让分层窗口参与合成；抓屏排斥由 WDA_EXCLUDEFROMCAPTURE 控制。
-            if (!NativeMethods.BitBlt(_memDc, 0, 0, width, height, _screenDc, screenX, screenY,
-                                      NativeMethods.SRCCOPY | NativeMethods.CAPTUREBLT))
+            _memDc = NativeMethods.CreateCompatibleDC(_screenDc);
+            _dib = NativeMethods.CreateDIBSection(_screenDc, ref bmi, NativeMethods.DIB_RGB_COLORS, out _bits, IntPtr.Zero, 0);
+
+            if (_memDc == IntPtr.Zero || _dib == IntPtr.Zero || _bits == IntPtr.Zero)
             {
+                ReleaseDib();
                 return false;
             }
 
-            if (mask.Width > 0 && mask.Height > 0)
-            {
-                FillMaskedRegion(width, height, mask);
-            }
-
-            int stride = width * 4;
-            _bitmap!.WritePixels(new Int32Rect(0, 0, width, height), _bits, stride * height, stride);
+            _oldDib = NativeMethods.SelectObject(_memDc, _dib);
+            _dibWidth = width;
+            _dibHeight = height;
             return true;
         }
+
+        private void ReleaseDib()
+        {
+            if (_memDc != IntPtr.Zero && _oldDib != IntPtr.Zero)
+            {
+                NativeMethods.SelectObject(_memDc, _oldDib);
+                _oldDib = IntPtr.Zero;
+            }
+
+            if (_dib != IntPtr.Zero)
+            {
+                NativeMethods.DeleteObject(_dib);
+                _dib = IntPtr.Zero;
+                _bits = IntPtr.Zero;
+            }
+
+            if (_memDc != IntPtr.Zero)
+            {
+                NativeMethods.DeleteDC(_memDc);
+                _memDc = IntPtr.Zero;
+            }
+
+            _dibWidth = 0;
+            _dibHeight = 0;
+        }
+
+        #endregion
+
+        #region UI 线程
+
+        private void EnsureBitmap(int width, int height)
+        {
+            if (_bitmap != null && _bitmapWidth == width && _bitmapHeight == height)
+            {
+                return;
+            }
+
+            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
+            _bitmapWidth = width;
+            _bitmapHeight = height;
+            Brush.ImageSource = _bitmap;
+        }
+
+        #endregion
 
         /// <summary>
         /// 用遮罩上下边框的像素做纵向插值填充：
@@ -199,92 +512,22 @@ namespace Pynelith.Glass.Backdrop
             Array.Copy(scratch, row, length);
         }
 
-        private bool EnsureBuffers(int width, int height)
-        {
-            if (_bitmap != null && _width == width && _height == height)
-            {
-                return true;
-            }
-
-            ReleaseBuffers();
-
-            var bmi = new NativeMethods.BITMAPINFOHEADER
-            {
-                biSize = 40,
-                biWidth = width,
-                biHeight = -height,
-                biPlanes = 1,
-                biBitCount = 32,
-                biCompression = (int)NativeMethods.BI_RGB,
-                biSizeImage = width * height * 4,
-            };
-
-            IntPtr screenDc = NativeMethods.GetDC(IntPtr.Zero);
-            if (screenDc == IntPtr.Zero)
-            {
-                return false;
-            }
-
-            _memDc = NativeMethods.CreateCompatibleDC(screenDc);
-            _dib = NativeMethods.CreateDIBSection(screenDc, ref bmi, NativeMethods.DIB_RGB_COLORS, out _bits, IntPtr.Zero, 0);
-            NativeMethods.ReleaseDC(IntPtr.Zero, screenDc);
-
-            if (_memDc == IntPtr.Zero || _dib == IntPtr.Zero || _bits == IntPtr.Zero)
-            {
-                ReleaseBuffers();
-                return false;
-            }
-
-            _oldDib = NativeMethods.SelectObject(_memDc, _dib);
-
-            _bitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Bgra32, null);
-            _width = width;
-            _height = height;
-            Brush.ImageSource = _bitmap;
-            return true;
-        }
-
-        private void ReleaseBuffers()
-        {
-            if (_memDc != IntPtr.Zero && _oldDib != IntPtr.Zero)
-            {
-                NativeMethods.SelectObject(_memDc, _oldDib);
-                _oldDib = IntPtr.Zero;
-            }
-
-            if (_dib != IntPtr.Zero)
-            {
-                NativeMethods.DeleteObject(_dib);
-                _dib = IntPtr.Zero;
-                _bits = IntPtr.Zero;
-            }
-
-            if (_memDc != IntPtr.Zero)
-            {
-                NativeMethods.DeleteDC(_memDc);
-                _memDc = IntPtr.Zero;
-            }
-
-            _bitmap = null;
-            _width = _height = 0;
-        }
-
         public void Dispose()
         {
-            if (_disposed)
+            lock (_gate)
             {
-                return;
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
             }
 
-            _disposed = true;
-
-            if (_screenDc != IntPtr.Zero)
-            {
-                NativeMethods.ReleaseDC(IntPtr.Zero, _screenDc);
-                _screenDc = IntPtr.Zero;
-            }
-
-            ReleaseBuffers();
+            // 唤醒工作线程，让它走完 finally 释放 GDI 资源。
+            _wake.Set();
+            _worker?.Join(500);
+            _worker = null;
         }
     }
 }

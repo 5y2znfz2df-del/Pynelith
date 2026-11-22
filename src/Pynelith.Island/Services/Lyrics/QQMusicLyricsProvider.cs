@@ -63,6 +63,13 @@ namespace Pynelith.Island.Services.Lyrics
                 return null;
             }
 
+            // ---- 优先取逐字歌词（QRC），没有再退回逐行歌词（LRC） ----
+            string? qrc = await FetchQrcAsync(songMid, ct);
+            if (!string.IsNullOrWhiteSpace(qrc))
+            {
+                return qrc;
+            }
+
             string lyricUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
                 + "?songmid=" + Uri.EscapeDataString(songMid)
                 + "&format=json&nobase64=1&inCharset=utf8&outCharset=utf-8";
@@ -77,6 +84,43 @@ namespace Pynelith.Island.Services.Lyrics
             if (lyricDoc.RootElement.TryGetProperty("lyric", out JsonElement lyric))
             {
                 return lyric.GetString();
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 取 QQ 音乐的逐字歌词（QRC 格式）。
+        /// QRC 的行结构是 <c>[起始ms,时长ms]字(字起始ms,字时长ms)…</c>，
+        /// 正是卡拉OK 高亮需要的时间片。
+        /// </summary>
+        private async Task<string?> FetchQrcAsync(string songMid, CancellationToken ct)
+        {
+            string qrcUrl = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
+                + "?songmid=" + Uri.EscapeDataString(songMid)
+                + "&format=json&nobase64=1&inCharset=utf8&outCharset=utf-8&qrc=1";
+
+            string? json = await LyricsHttp.GetAsync(qrcUrl, LyricReferer, ct);
+            if (json == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("qrc_lyric", out JsonElement qrc))
+                {
+                    string? text = qrc.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // 响应不是预期的 JSON：退回逐行歌词。
             }
 
             return null;

@@ -1,8 +1,10 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
@@ -33,7 +35,9 @@ namespace Pynelith.Island
             // 渲染走 GPU：WPF 默认就是硬件（D3D9Ex）渲染，这里显式声明意图，
             // 只有驱动缺失 / 远程桌面等情况才会由系统退回 CPU 软件渲染。
             RenderOptions.ProcessRenderMode = RenderMode.Default;
-            PreferHighPerformanceGpu();
+
+            // GPU 偏好写注册表只影响"下一次"启动，放在后台线程做，不占用首屏启动时间。
+            _ = Task.Run(PreferHighPerformanceGpu);
 
             // 单实例：重复启动直接退出，避免托盘/顶栏出现多个灵动岛，也避免安装器
             // 自动拉起时与用户已手动打开的实例相互抢停靠位置。
@@ -71,9 +75,18 @@ namespace Pynelith.Island
             island.Show();
 
             // 托盘常驻：岛没有标题栏，托盘是稳定的设置/退出入口。
-            _tray = new TrayService(island.ShowSettingsFromTray, island.ExitFromTray);
+            // 托盘图标的创建排在首屏之后，先把岛画出来再挂托盘，缩短"点开机到看见岛"的时间。
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.ApplicationIdle,
+                new Action(() =>
+                {
+                    _tray = new TrayService(island.ShowSettingsFromTray, island.ExitFromTray);
+                }));
 
-            _ = _media.InitializeAsync();
+            // 媒体会话初始化需要跨进程请求 SMTC，同样延后到首屏之后。
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.ApplicationIdle,
+                new Action(() => { _ = _media.InitializeAsync(); }));
         }
 
         /// <summary>

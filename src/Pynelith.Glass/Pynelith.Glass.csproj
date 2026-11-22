@@ -10,6 +10,8 @@
   <ItemGroup>
     <!-- 预编译的像素着色器字节码（fxc /T ps_3_0 生成，作为 WPF Resource 打包） -->
     <Resource Include="Effects\Assets\LiquidGlass.gshader" Condition="Exists('Effects\Assets\LiquidGlass.gshader')" />
+    <!-- Siri 透镜着色器：椭圆折射 + 中心横向色散光带 -->
+    <Resource Include="Effects\Assets\LensGlow.gshader" Condition="Exists('Effects\Assets\LensGlow.gshader')" />
   </ItemGroup>
 
 </Project>

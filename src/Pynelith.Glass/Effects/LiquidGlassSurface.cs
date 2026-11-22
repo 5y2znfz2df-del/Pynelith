@@ -105,6 +105,7 @@ namespace Pynelith.Glass.Effects
         private DispatcherTimer? _timer;
         private bool _displayAffinityApplied;
         private bool _screenBackdropActive;
+        private bool _usesScreenBackdrop;
         private bool _disposed;
 
         private LiquidGlassSurface(FrameworkElement target, LiquidGlassStyle style)
@@ -159,6 +160,7 @@ namespace Pynelith.Glass.Effects
             // - 排除捕获（常规模式）：抓屏里没有自己，边缘折射直接拿到真实桌面；
             // - 不排除（录屏兼容模式）：抓屏里包含自己，采样时用遮罩把自己抹掉，
             //   边缘折射仍然采样到玻璃外侧的真实桌面像素，色散/折射与常规模式一致。
+            _usesScreenBackdrop = style.UseScreenBackdrop;
             if (style.UseScreenBackdrop)
             {
                 AttachScreenBackdrop();
@@ -197,8 +199,47 @@ namespace Pynelith.Glass.Effects
         public bool IsScreenBackdropActive => _screenBackdropActive;
 
         /// <summary>
+        /// 整体不透明度 0..1。
+        /// 供宿主在别的视觉层接管胶囊时（如 Siri 透镜展开）整块淡出玻璃，
+        /// 淡到 0 时同时停掉屏幕采样，避免不可见的玻璃继续抓屏。
+        /// </summary>
+        public double Opacity
+        {
+            get => _surface.Opacity;
+            set
+            {
+                double opacity = Math.Clamp(value, 0, 1);
+                if (Math.Abs(_surface.Opacity - opacity) < 0.001)
+                {
+                    return;
+                }
+
+                _surface.Opacity = opacity;
+
+                if (_timer == null)
+                {
+                    return;
+                }
+
+                bool visible = opacity > 0.01
+                    && _window is { IsVisible: true }
+                    && _window.WindowState != WindowState.Minimized;
+
+                if (visible)
+                {
+                    _timer.Start();
+                }
+                else
+                {
+                    _timer.Stop();
+                }
+            }
+        }
+
+        /// <summary>
         /// 动态调整采样帧率：静止时降到 8–10fps，形变动画时回到 24fps。
-        /// 抓屏 + 像素处理都在 UI 线程，这是最直接的一处开销削减。
+        /// 抓屏本身跑在独立工作线程上，这里改的是"提交请求"的频率，
+        /// 因此降频只影响画面新鲜度，不会影响 UI 线程的响应。
         /// </summary>
         public void SetFrameRate(int framesPerSecond)
         {
@@ -350,17 +391,24 @@ namespace Pynelith.Glass.Effects
                     ? new Int32Rect(0, 0, 0, 0)
                     : new Int32Rect(margin, margin, width, height);
 
-                _screenBackdropActive = _sampler.Capture(
+                // 采样区几何先推给着色器：即使这一拍的帧还没抓回来，
+                // 上一帧的画面也会按正确的区域映射，不会出现错位。
+                _effect.BackdropOffset = new Point(margin, margin);
+                _effect.BackdropSize = new Point(width + margin * 2, height + margin * 2);
+
+                // 抓屏在独立工作线程执行：这里只提交请求，UI 线程不做 BitBlt。
+                _sampler.Request(
                     (int)Math.Round(origin.X) - margin,
                     (int)Math.Round(origin.Y) - margin,
                     width + margin * 2,
                     height + margin * 2,
                     mask);
 
-                if (_screenBackdropActive)
+                // 把工作线程已经抓好的帧（如果上一拍已完成）交给着色器。
+                // 只有一次 memcpy，UI 线程上不再有 BitBlt 的抖动。
+                if (_sampler.TryUpload())
                 {
-                    _effect.BackdropOffset = new Point(margin, margin);
-                    _effect.BackdropSize = new Point(width + margin * 2, height + margin * 2);
+                    _screenBackdropActive = true;
                 }
 
                 UpdateLightAngle();
@@ -416,7 +464,9 @@ namespace Pynelith.Glass.Effects
 
             // 无屏幕采样时，输入就是元素自身的渐变：按 1:1 采样，
             // 否则默认的抓屏尺寸/偏移会把渐变映射到错误的位置。
-            if (!_screenBackdropActive)
+            // 注意判定用的是"是否启用了采样"，而不是"是否已经抓到过帧"——
+            // 采样模式下第一帧还没回来时，BackdropOffset/Size 由采样定时器负责推送。
+            if (!_usesScreenBackdrop)
             {
                 double scale = GetDpiScale();
                 _effect.BackdropOffset = new Point(0, 0);

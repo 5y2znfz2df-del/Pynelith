@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -28,6 +29,8 @@ namespace Pynelith.Island.Services.Media
         private GlobalSystemMediaTransportControlsSessionManager? _manager;
         private GlobalSystemMediaTransportControlsSession? _session;
         private readonly DispatcherTimer _positionTimer;
+        private readonly DispatcherTimer _windowTimer;
+        private readonly PlayerWindowWatcher _windowWatcher;
         private TimeSpan _positionBase;
         private DateTime _positionStampUtc = DateTime.UtcNow;
         private TimeSpan _lastSmtcPosition = TimeSpan.MinValue;
@@ -35,6 +38,12 @@ namespace Pynelith.Island.Services.Media
         private bool _timelineReliable;
         private bool _isPlaying;
         private bool _disposed;
+
+        // 不上报进度的播放器（网易云）：用窗口标题变化作为更准的"换歌 0 点"信号。
+        private PlayerProfile _profile = PlayerProfiles.Unknown;
+        private string _assistedTrackKey = string.Empty;
+        private DateTime _lastTrackChangeUtc = DateTime.MinValue;
+        private int _progressOffsetMs;
 
         // 跳转后的保护窗口：部分播放器在 Seek 完成后仍会回报旧位置，
         // 若立即采信，进度条会先跳到目标再弹回原处。保护窗口内忽略时间轴校正。
@@ -50,6 +59,15 @@ namespace Pynelith.Island.Services.Media
         public bool IsPlaying => _isPlaying;
         public TimeSpan Duration { get; private set; }
         public string SourceApp { get; private set; } = string.Empty;
+
+        /// <summary>当前播放器的画像（用于判断它是否上报进度）。</summary>
+        public PlayerProfile Profile => _profile;
+
+        /// <summary>
+        /// 当前播放位置是否可信。
+        /// 播放器上报了真实进度时为 true；否则说明位置是推算值，可能存在偏差。
+        /// </summary>
+        public bool IsPositionEstimated => !_profile.ReportsProgress || !_timelineReliable;
 
         /// <summary>当前播放器是否开启随机播放。</summary>
         public bool IsShuffleActive { get; private set; }
@@ -71,6 +89,9 @@ namespace Pynelith.Island.Services.Media
                     pos += DateTime.UtcNow - _positionStampUtc;
                 }
 
+                // 进度对齐预设：把推算值整体平移，修正不同音频版本之间的固定偏差。
+                pos += TimeSpan.FromMilliseconds(_progressOffsetMs);
+
                 if (pos < TimeSpan.Zero)
                 {
                     pos = TimeSpan.Zero;
@@ -85,8 +106,24 @@ namespace Pynelith.Island.Services.Media
             }
         }
 
+        /// <summary>
+        /// 套用进度对齐预设。
+        /// 传入的预设 id 为空表示回到纯推算进度（偏移归零）。
+        /// </summary>
+        public void ApplyOffsetPreset(string? presetId)
+        {
+            var preset = string.IsNullOrWhiteSpace(presetId)
+                ? null
+                : PlayerOffsetPresets.Find(presetId);
+
+            _progressOffsetMs = preset?.ProgressOffsetMs ?? 0;
+        }
+
         public MediaSessionService()
         {
+            _windowWatcher = new PlayerWindowWatcher();
+            _windowWatcher.TitleChanged += OnWindowTitleChanged;
+
             _positionTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
                 Interval = TimeSpan.FromMilliseconds(400),
@@ -103,6 +140,14 @@ namespace Pynelith.Island.Services.Media
 
                 RefreshTimelineIfPlaying();
             };
+
+            // 窗口标题轮询独立于位置心跳：只有需要辅助同步的播放器才会启动它，
+            // 而且轮询频率可以更高（标题变化的时间点才估得准）。
+            _windowTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(250),
+            };
+            _windowTimer.Tick += (_, _) => PollWindowAssist();
         }
 
         /// <summary>请求系统全局会话管理器并开始自动扫描。</summary>
@@ -280,6 +325,10 @@ namespace Pynelith.Island.Services.Media
                 RepeatMode = MediaRepeatMode.None;
                 _positionBase = TimeSpan.Zero;
                 _positionStampUtc = DateTime.UtcNow;
+                _profile = PlayerProfiles.Unknown;
+                _assistedTrackKey = string.Empty;
+                _windowWatcher.Detach();
+                _windowTimer.Stop();
                 Raise();
                 return;
             }
@@ -297,11 +346,27 @@ namespace Pynelith.Island.Services.Media
                 SourceApp = string.Empty;
             }
 
+            // 识别播放器画像：决定时间轴能不能采信，以及要不要启用窗口标题辅助同步。
+            _profile = PlayerProfiles.FromAumid(SourceApp);
+
             // 切歌后位置归零，避免沿用上一首的时间轴导致歌词错位
             _positionBase = TimeSpan.Zero;
             _positionStampUtc = DateTime.UtcNow;
             _lastSmtcPosition = TimeSpan.MinValue;
             _timelineReliable = false;
+            _assistedTrackKey = string.Empty;
+            _lastTrackChangeUtc = DateTime.MinValue;
+
+            // 不上报进度的播放器：用窗口标题变化捕捉更准的"换歌 0 点"。
+            if (PlayerProfiles.NeedsWindowAssist(_profile))
+            {
+                AttachWindowWatcher();
+            }
+            else
+            {
+                _windowWatcher.Detach();
+                _windowTimer.Stop();
+            }
 
             // 新会话先清空旧的随机/循环状态，随后由 UpdatePlaybackInfo 按真实状态覆盖
             IsShuffleActive = false;
@@ -344,6 +409,158 @@ namespace Pynelith.Island.Services.Media
         private void OnSessionTimelineChanged(GlobalSystemMediaTransportControlsSession sender, object args)
             => OnUi(UpdateTimeline);
 
+        #region 换歌检测与窗口标题辅助同步
+
+        /// <summary>
+        /// 换歌处理：重置播放位置基准。
+        ///
+        /// 上报进度的播放器：位置会被时间轴校正，这里的重置只是让歌词立即回到第一行。
+        /// 不上报进度的播放器（网易云）：「曲目元数据变化」的时刻只能近似当��新歌的 0 点，
+        /// 真正的 0 点由窗口标题变化来捕捉（见 <see cref="OnWindowTitleChanged"/>）。
+        /// </summary>
+        private void HandleTrackChanged()
+        {
+            _positionBase = TimeSpan.Zero;
+            _positionStampUtc = DateTime.UtcNow;
+            _lastSmtcPosition = TimeSpan.MinValue;
+            _lastTrackChangeUtc = DateTime.UtcNow;
+
+            // 让窗口标题监听器忘掉旧标题：下次读到同一个标题时不会被误判成"又换歌了"。
+            _assistedTrackKey = string.Empty;
+        }
+
+        /// <summary>把窗口标题监听器绑到播放器进程上。</summary>
+        private void AttachWindowWatcher()
+        {
+            uint processId = ResolveProcessId(_profile);
+            if (processId == 0)
+            {
+                return;
+            }
+
+            _windowWatcher.Attach(processId);
+            _windowTimer.Start();
+        }
+
+        /// <summary>按画像里的进程名关键字找到播放器进程。</summary>
+        private static uint ResolveProcessId(PlayerProfile profile)
+        {
+            if (profile.ProcessKeywords.Length == 0)
+            {
+                return 0;
+            }
+
+            try
+            {
+                foreach (var process in Process.GetProcesses())
+                {
+                    try
+                    {
+                        string name = process.ProcessName.ToLowerInvariant();
+                        foreach (var keyword in profile.ProcessKeywords)
+                        {
+                            if (name.Contains(keyword, StringComparison.Ordinal))
+                            {
+                                return (uint)process.Id;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 枚举进程失败（权限等）：放弃窗口辅助，退回纯 SMTC 推算。
+            }
+
+            return 0;
+        }
+
+        /// <summary>轮询窗口标题（只在需要辅助同步的播放器上才有开销）。</summary>
+        private void PollWindowAssist()
+        {
+            if (_disposed || !PlayerProfiles.NeedsWindowAssist(_profile))
+            {
+                return;
+            }
+
+            _windowWatcher.Poll();
+        }
+
+        /// <summary>
+        /// 窗口标题变化 = 换歌了。
+        ///
+        /// 这是网易云这类不上报进度的播放器上最准的 0 点信号：
+        /// 标题在音频真正开始播放时就已经更新，比 SMTC 元数据事件早几百毫秒。
+        /// </summary>
+        private void OnWindowTitleChanged(string windowTitle, DateTime changedAtUtc)
+        {
+            if (_disposed || !_isPlaying)
+            {
+                return;
+            }
+
+            var (title, artist) = PlayerWindowWatcher.SplitTitle(windowTitle, _profile.TitleSeparator);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return;
+            }
+
+            // 标题里常常带着播放器的固定前后缀（如"网易云音乐"），
+            // 只有歌名确实变了才算换歌，否则每次刷新都会把位置重置。
+            string key = title + "|" + artist;
+            if (string.Equals(key, _assistedTrackKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _assistedTrackKey = key;
+
+            // 与 SMTC 曲名不一致时不做处理：说明窗口标题不是当前曲目（可能是别的窗口）。
+            if (!string.IsNullOrWhiteSpace(Title)
+                && !string.IsNullOrWhiteSpace(title)
+                && !ContainsNormalized(title, Title)
+                && !ContainsNormalized(Title, title))
+            {
+                return;
+            }
+
+            // 换歌：把播放位置基准归零。
+            // 基准戳用「标题变化时刻」而非「现在」——标题变化比元数据事件早，
+            // 这样歌词能从真正的音频起点开始，而不是从元数据到达时开始。
+            // 再减去该播放器的元数据延迟（网易云约 350ms），补偿"标题先变、音频后起"的差。
+            _positionBase = TimeSpan.Zero;
+            _positionStampUtc = changedAtUtc.AddMilliseconds(-_profile.MetadataLagMs);
+            _lastSmtcPosition = TimeSpan.MinValue;
+            _lastTrackChangeUtc = DateTime.UtcNow;
+            Raise();
+        }
+
+        /// <summary>归一化后判断两个标题是否指向同一首歌（忽略大小写、空格与标点差异）。</summary>
+        private static bool ContainsNormalized(string haystack, string needle)
+        {
+            return Normalize(haystack).Contains(Normalize(needle), StringComparison.Ordinal);
+        }
+
+        private static string Normalize(string value)
+        {
+            var sb = new System.Text.StringBuilder(value.Length);
+            foreach (char c in value)
+            {
+                if (char.IsLetterOrDigit(c))
+                {
+                    sb.Append(char.ToLowerInvariant(c));
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        #endregion
+
         #endregion
 
         #region 状态刷新
@@ -366,13 +583,9 @@ namespace Pynelith.Island.Services.Media
                 Title = newTitle;
                 Artist = newArtist;
 
-                if (trackChanged && !_timelineReliable)
+                if (trackChanged)
                 {
-                    // 播放器不上报进度（如网易云）：把「曲目元数据变化」的时刻当作新歌的 0 点，
-                    // 这样换歌后歌词与音频基本同步（事件延迟通常在 100ms 内）。
-                    _positionBase = TimeSpan.Zero;
-                    _positionStampUtc = DateTime.UtcNow;
-                    _lastSmtcPosition = TimeSpan.MinValue;
+                    HandleTrackChanged();
                 }
 
                 Raise();
@@ -787,6 +1000,9 @@ namespace Pynelith.Island.Services.Media
 
             _disposed = true;
             _positionTimer.Stop();
+            _windowTimer.Stop();
+            _windowWatcher.TitleChanged -= OnWindowTitleChanged;
+            _windowWatcher.Dispose();
 
             if (_session != null)
             {

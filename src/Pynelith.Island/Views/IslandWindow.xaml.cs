@@ -13,12 +13,16 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Pynelith.Glass.Effects;
 using Pynelith.Island.Configuration;
+using Pynelith.Island.Models;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
+using Pynelith.Island.Services.Siri;
 
 namespace Pynelith.Island.Views
 {
@@ -96,7 +100,7 @@ namespace Pynelith.Island.Views
         private double _dv;
 
         // 消息展示：_n 为消息面板展开度 0..1，独立的弹簧通道
-        private readonly Queue<(string App, string Body)> _messageQueue = new Queue<(string App, string Body)>();
+        private readonly Queue<NotificationItem> _messageQueue = new Queue<NotificationItem>();
         private readonly DispatcherTimer _messageHoldTimer;
         private bool _messageTargetOn;
         private bool _messageShowing;
@@ -104,6 +108,43 @@ namespace Pynelith.Island.Views
         private double _nv;
         private double _notifWidth = 300;
         private double _notifHeight = 96;
+
+        // 欢迎动画期间的胶囊撑开：_i 为展开度 0..1，独立的弹簧通道。
+        // 用户可能把胶囊收得很小（如 58×22），放不下 hello，因此动画期间临时撑开。
+        private bool _introSizeTarget;
+        private double _i;
+        private double _iv;
+
+        // Siri 透镜面板：_s 为展开度 0..1，独立的弹簧通道（与详情 / 消息互斥）。
+        private bool _siriTarget;
+        private double _s;
+        private double _sv;
+        private bool _siriCollapsing;
+
+        // Siri 组件（可插拔、可单独禁用）
+        private readonly SiriConfig _siriConfig;
+        private readonly SiriService? _siri;
+        private LensGlowSurface? _siriGlass;
+        private DispatcherTimer? _siriGlowTimer;
+        private DateTime _siriGlowPhase = DateTime.MinValue;
+        private double _siriGlowIntensity;
+        private double _siriGlowCollapse;
+
+        // 当前展示的通知（用于消息面板收尾时清理）
+        private NotificationItem? _currentNotification;
+
+        // 通知历史（按应用分组，持久化到磁盘）
+        private readonly NotificationHistoryStore _history = new NotificationHistoryStore();
+
+        // 系统深浅色监听（跟随系统自动换配色）
+        private SystemThemeService? _systemTheme;
+        private bool _followSystemThemeApplied = true;
+
+        // 入场动画是否正在播放（防止解锁与启动重复触发）
+        private bool _introRunning;
+
+        // 欢迎动画期间隐藏胶囊内的其它内容
+        private bool _introActive;
 
         // 点击播放后短暂锁定图标，避免 SMTC 状态回报滞后把图标刷回旧值
         private DateTime _playGlyphLockUntil = DateTime.MinValue;
@@ -134,6 +175,10 @@ namespace Pynelith.Island.Views
         private string _currentLyricText = string.Empty;
         private int _lastAppliedLyricOffset;
         private int _lyricSourceMask = -1;
+        private string _appliedProgressPresetId = string.Empty;
+
+        // 逐字（卡拉 OK）高亮：每个歌词 TextBlock 一份（A/B 双缓冲各一份）
+        private readonly Dictionary<TextBlock, KaraokeLyricText> _karaoke = new Dictionary<TextBlock, KaraokeLyricText>();
 
         private IslandConfig Config => _service.Config;
 
@@ -169,8 +214,25 @@ namespace Pynelith.Island.Views
             HighlightPath.Data = _highlightGeometry;
             TopArcPath.Data = _topArcGeometry;
 
+            // 逐字（卡拉 OK）高亮：给四个歌词 TextBlock 各建一份 Inline 结构。
+            // 已唱部分用强调色，未唱部分用弱化色 —— 与液态玻璃的强调色一致。
+            foreach (var block in new[] { CompactLyricA, CompactLyricB, DetailLyricA, DetailLyricB })
+            {
+                _karaoke[block] = new KaraokeLyricText(
+                    block,
+                    sungColor: Color.FromRgb(0xFF, 0x37, 0x5F),
+                    unsungColor: Color.FromArgb(0x9E, 0xFF, 0xFF, 0xFF));
+            }
+
             // ---- 主题：液态玻璃才安装玻璃层；纯黑/磨砂用静态底色，零抓屏开销 ----
             ApplyTheme();
+
+            // ---- 系统深浅色：跟随系统自动换配色 ----
+            if (Config.FollowSystemTheme)
+            {
+                _systemTheme = new SystemThemeService();
+                _systemTheme.ThemeChanged += OnSystemThemeChanged;
+            }
 
             // ---- 系统监控：CPU / 内存采样（按配置决定是否启动） ----
             _metrics = new SystemMetricsService();
@@ -179,6 +241,14 @@ namespace Pynelith.Island.Views
             // 模拟通知完全关闭：岛内只展示真实系统通知，避免演示数据混入消息流
             _feed = new MockFeed(Config, notificationsEnabled: false);
             SetupBridge();
+
+            // ---- Siri 组件：可插拔、可单独禁用。禁用时不装玻璃、不开麦 ----
+            _siriConfig = SiriConfig.Load();
+            if (_siriConfig.Enabled)
+            {
+                _siri = new SiriService(_siriConfig);
+            }
+            InitSiri();
 
             _messageHoldTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
@@ -284,7 +354,234 @@ namespace Pynelith.Island.Views
 
             // 启动即同步一次媒体状态（会话服务可能已先就绪）
             OnMediaStateChanged(this, EventArgs.Empty);
+
+            // 开机进入桌面：胶囊从顶端滑入
+            PlayIntro();
+
+            // Siri 组件：加载离线唤醒模型（首次会下载约 42MB），延后到首屏之后
+            StartSiriAsync();
+
+            // 锁屏解锁同样播放一次（Win+L 之后回到桌面）
+            SystemEvents.SessionSwitch += OnSessionSwitch;
         }
+
+        /// <summary>锁屏 / 解锁切换：只有解锁回来时才播放入场。</summary>
+        private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            if (e.Reason == SessionSwitchReason.SessionUnlock)
+            {
+                PlayIntro();
+            }
+        }
+
+        #region 入场动画
+
+        /// <summary>
+        /// 欢迎动画素材：彩虹手写 "hello"。
+        ///
+        /// 精灵图按纵向排列，每帧占固定行高；播放时用 <see cref="CroppedBitmap"/>
+        /// 逐帧裁出并切给 Image，因此不需要任何外部动画库。
+        /// </summary>
+        private const int IntroHelloFrameHeight = 96;
+
+        /// <summary>每帧显示时长（毫秒）。45 帧 × 50ms ≈ 2.25s 写完，比原片略快一点，更利落。</summary>
+        private const int IntroHelloFrameMs = 50;
+
+        /// <summary>hello 画完后的停留时间（毫秒），之后再淡出。</summary>
+        private const int IntroHelloHoldMs = 420;
+
+        /// <summary>欢迎动画帧序列（懒加载，构造时不阻塞首屏）。</summary>
+        private static readonly Lazy<IReadOnlyList<BitmapSource>> IntroHelloFrames =
+            new Lazy<IReadOnlyList<BitmapSource>>(LoadIntroHelloFrames);
+
+        /// <summary>欢迎动画播放定时器。</summary>
+        private DispatcherTimer? _introFrameTimer;
+
+        /// <summary>欢迎动画当前帧序号。</summary>
+        private int _introFrameIndex;
+
+        /// <summary>把精灵图按固定行高切成独立帧。</summary>
+        private static IReadOnlyList<BitmapSource> LoadIntroHelloFrames()
+        {
+            var frames = new List<BitmapSource>();
+
+            try
+            {
+                var uri = new Uri("pack://application:,,,/Pynelith.Island;component/Assets/Intro/hello.png");
+                var decoder = new PngBitmapDecoder(
+                    uri,
+                    BitmapCreateOptions.PreservePixelFormat,
+                    BitmapCacheOption.OnLoad);
+
+                BitmapSource sheet = decoder.Frames[0];
+                int frameHeight = Math.Min(IntroHelloFrameHeight, sheet.PixelHeight);
+
+                for (int y = 0; y + frameHeight <= sheet.PixelHeight; y += frameHeight)
+                {
+                    var crop = new CroppedBitmap(
+                        sheet,
+                        new Int32Rect(0, y, sheet.PixelWidth, frameHeight));
+
+                    frames.Add(crop);
+                }
+            }
+            catch (Exception)
+            {
+                // 素材缺失时退化为"无动画"，不影响岛的其它功能。
+            }
+
+            return frames;
+        }
+
+        /// <summary>
+        /// 入场：胶囊从屏幕顶端之上滑入，先快后慢。
+        ///
+        /// 只改视觉位移（<see cref="IntroTranslate"/>），不动窗口位置，
+        /// 因此不会与停靠守护（拦截 WM_WINDOWPOSCHANGING）冲突。
+        /// 系统关闭「显示动画」时直接落位。
+        /// </summary>
+        private void PlayIntro()
+        {
+            if (_introRunning || !IsVisible)
+            {
+                return;
+            }
+
+            double startOffset = -(Height + 24);
+
+            if (!SystemParameters.ClientAreaAnimation)
+            {
+                IntroTranslate.Y = 0;
+                return;
+            }
+
+            _introRunning = true;
+            _introActive = true;
+
+            // 撑开胶囊：用户可能把胶囊配得很小，不撑开 hello 会被裁掉
+            _introSizeTarget = true;
+            EnsureSpring();
+
+            ApplyMorph(_p);
+
+            var drop = new DoubleAnimation
+            {
+                From = startOffset,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(460),
+                // 先快后慢：EaseOut 起步速度最高，收尾最慢
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop,
+            };
+
+            drop.Completed += (_, _) =>
+            {
+                IntroTranslate.Y = 0;
+                _introRunning = false;
+                PlayIntroAnimation();
+            };
+
+            IntroTranslate.BeginAnimation(TranslateTransform.YProperty, drop);
+        }
+
+        /// <summary>
+        /// 欢迎动画：彩虹手写 "hello" 逐帧书写，停留片刻后淡出。
+        /// 只有这段动画消失，胶囊照常显示。
+        /// </summary>
+        private void PlayIntroAnimation()
+        {
+            IReadOnlyList<BitmapSource> frames = IntroHelloFrames.Value;
+
+            if (!SystemParameters.ClientAreaAnimation || frames.Count == 0)
+            {
+                RestoreIntroContent();
+                return;
+            }
+
+            _introFrameIndex = 0;
+            IntroHelloImage.Source = frames[0];
+            IntroHello.Visibility = Visibility.Visible;
+            IntroHello.Opacity = 1;
+
+            _introFrameTimer?.Stop();
+            _introFrameTimer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(IntroHelloFrameMs),
+            };
+            _introFrameTimer.Tick += OnIntroFrameTick;
+            _introFrameTimer.Start();
+        }
+
+        /// <summary>逐帧推进；播完后进入停留 / 淡出阶段。</summary>
+        private void OnIntroFrameTick(object? sender, EventArgs e)
+        {
+            IReadOnlyList<BitmapSource> frames = IntroHelloFrames.Value;
+            _introFrameIndex++;
+
+            if (_introFrameIndex >= frames.Count)
+            {
+                _introFrameTimer?.Stop();
+                HoldThenFadeHello();
+                return;
+            }
+
+            IntroHelloImage.Source = frames[_introFrameIndex];
+        }
+
+        /// <summary>画完后停留一会儿再淡出，避免还没看清就消失。</summary>
+        private void HoldThenFadeHello()
+        {
+            var timer = new DispatcherTimer(DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(IntroHelloHoldMs),
+            };
+
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+
+                var fadeOut = Fade(1, 0, 320, new CubicEase { EasingMode = EasingMode.EaseIn });
+                fadeOut.Completed += (_, _) => ResetHello();
+                IntroHello.BeginAnimation(OpacityProperty, fadeOut);
+            };
+
+            timer.Start();
+        }
+
+        /// <summary>收尾：折叠并清掉动画，恢复胶囊内的常规内容。</summary>
+        private void ResetHello()
+        {
+            _introFrameTimer?.Stop();
+            _introFrameTimer = null;
+
+            IntroHello.Visibility = Visibility.Collapsed;
+            IntroHello.BeginAnimation(OpacityProperty, null);
+            IntroHello.Opacity = 0;
+            IntroHelloImage.Source = null;
+
+            RestoreIntroContent();
+        }
+
+        /// <summary>结束欢迎态，让时间 / 歌词 / 播放控件按当前形态重新淡入。</summary>
+        private void RestoreIntroContent()
+        {
+            // 收回胶囊到原尺寸
+            if (_introSizeTarget)
+            {
+                _introSizeTarget = false;
+                EnsureSpring();
+            }
+
+            if (!_introActive)
+            {
+                return;
+            }
+
+            _introActive = false;
+            ApplyMorph(_p);
+        }
+
+        #endregion
 
         #region 停靠守护与置顶
 
@@ -301,6 +598,21 @@ namespace Pynelith.Island.Views
             {
                 _hwnd = src.Handle;
                 src.AddHook(DockGuardWndProc);
+                AttachSiriHotkey(src);
+            }
+        }
+
+        /// <summary>
+        /// 逐屏 DPI 变化：岛被拖到缩放不同的屏上时，WPF 会发 WM_DPICHANGED。
+        /// 此时必须按新屏的 DPI 重新计算停靠位置，否则岛会停在错误的像素坐标上。
+        /// </summary>
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+        {
+            base.OnDpiChanged(oldDpi, newDpi);
+
+            if (!_dragging)
+            {
+                Reposition();
             }
         }
 
@@ -329,8 +641,12 @@ namespace Pynelith.Island.Views
 
                     if ((wp.flags & SWP_NOMOVE) == 0)
                     {
-                        double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-                        Rect work = SystemParameters.WorkArea;
+                        // 逐屏 DPI：目标屏可能是缩放不同的那块，
+                        // 用它自己的 DPI 把 DIP 坐标换算成物理像素。
+                        var monitor = TargetWorkArea();
+                        double dpi = monitor.DpiScale;
+                        Rect work = monitor.WorkArea;
+
                         int targetX = (int)Math.Round((work.Left + (work.Width - Width) * 0.5 + Config.ScreenOffsetX) * dpi);
                         int targetY = (int)Math.Round(Config.ScreenOffsetY * dpi);
 
@@ -402,7 +718,6 @@ namespace Pynelith.Island.Views
             ApplyMorph(_p);
             UpdateTexts();
             Reposition();
-
             // 只有歌词开关/歌词源变化才重新匹配；单纯调偏移不应触发重新查询
             int sourceMask = (Config.LyricsEnabled ? 1 : 0)
                 | (Config.LyricsSourceNetease ? 2 : 0)
@@ -426,6 +741,44 @@ namespace Pynelith.Island.Views
                 _lyricIndex = -2;
                 SyncLyricPosition();
             }
+
+            // 进度对齐预设变化：立即套用到播放位置推算上
+            if (_appliedProgressPresetId != Config.ProgressOffsetPresetId)
+            {
+                _appliedProgressPresetId = Config.ProgressOffsetPresetId;
+                _media.ApplyOffsetPreset(Config.ProgressOffsetPresetId);
+            }
+
+            // 跟随系统深浅色开关变化：启停监听并立即重刷配色
+            if (_followSystemThemeApplied != Config.FollowSystemTheme)
+            {
+                _followSystemThemeApplied = Config.FollowSystemTheme;
+                ApplyFollowSystemTheme();
+            }
+        }
+
+        /// <summary>按配置启停系统深浅色监听。</summary>
+        private void ApplyFollowSystemTheme()
+        {
+            if (Config.FollowSystemTheme)
+            {
+                if (_systemTheme == null)
+                {
+                    _systemTheme = new SystemThemeService();
+                    _systemTheme.ThemeChanged += OnSystemThemeChanged;
+                }
+            }
+            else
+            {
+                if (_systemTheme != null)
+                {
+                    _systemTheme.ThemeChanged -= OnSystemThemeChanged;
+                    _systemTheme.Dispose();
+                    _systemTheme = null;
+                }
+            }
+
+            ApplyTheme();
         }
 
         #region 主题与系统监控
@@ -458,6 +811,9 @@ namespace Pynelith.Island.Views
                     _glass = InstallGlass(recordableGlass);
                     _glassCompatMode = recordableGlass;
                 }
+
+                // Siri 透镜的显示亲和力作用在同一个窗口上，也必须跟着一起换
+                RefreshSiriGlass();
             }
             else
             {
@@ -505,6 +861,10 @@ namespace Pynelith.Island.Views
                 ThemeBackdrop.BorderThickness = new Thickness(0.75);
             }
 
+            // 系统浅色模式：纯黑 / 磨砂换成浅色配色，图标与文字反相，
+            // 避免在浅色桌面上一块黑砖头。
+            ApplySystemLightPalette(liquidGlass);
+
             // 玻璃层重建后强制下一帧把形状参数推过去
             _lastGlassWidth = -1;
             _lastGlassHeight = -1;
@@ -513,6 +873,101 @@ namespace Pynelith.Island.Views
             _glassDirty = true;
             _glassFrameSkip = 0;
             ApplyMorph(_p);
+        }
+
+        /// <summary>
+        /// 跟随系统深浅色：浅色系统下把纯黑 / 磨砂换成浅色底，
+        /// 并把前景文字与图标反相。
+        /// 液态玻璃本身是抓屏折射，背景由桌面决定，不需要改配色。
+        /// </summary>
+        private void ApplySystemLightPalette(bool liquidGlass)
+        {
+            bool light = Config.FollowSystemTheme
+                && _systemTheme?.Current == SystemThemeMode.Light;
+
+            if (light && !liquidGlass)
+            {
+                if (string.Equals(_appliedTheme, ThemeStyles.PureBlack, StringComparison.Ordinal))
+                {
+                    // 浅色纯黑：近乎白的底 + 极淡的描边
+                    ThemeBackdrop.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Point(0, 0),
+                        EndPoint = new Point(0, 1),
+                        GradientStops =
+                        {
+                            new GradientStop(Color.FromRgb(0xFA, 0xFA, 0xFC), 0.0),
+                            new GradientStop(Color.FromRgb(0xF2, 0xF3, 0xF6), 0.45),
+                            new GradientStop(Color.FromRgb(0xE9, 0xEA, 0xEE), 1.0),
+                        },
+                    };
+                    ThemeBackdrop.BorderBrush = RimBrush(0x28, 0x14, 0x1C);
+                }
+                else
+                {
+                    // 浅色磨砂：半透明白 + 柔和阴影感
+                    ThemeBackdrop.Background = new LinearGradientBrush
+                    {
+                        StartPoint = new Point(0, 0),
+                        EndPoint = new Point(0, 1),
+                        GradientStops =
+                        {
+                            new GradientStop(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF), 0.0),
+                            new GradientStop(Color.FromArgb(0xEA, 0xF6, 0xF7, 0xFA), 0.5),
+                            new GradientStop(Color.FromArgb(0xE4, 0xEE, 0xF0, 0xF4), 1.0),
+                        },
+                    };
+                    ThemeBackdrop.BorderBrush = RimBrush(0x30, 0x16, 0x1E);
+                }
+            }
+            else if (!liquidGlass)
+            {
+                // 深色：恢复默认配色（ApplyTheme 的 else 分支已经设过，这里无需处理）
+            }
+
+            // 前景色（文字 / 图标）跟随系统深浅反相
+            ApplyForegroundPalette(light);
+        }
+
+        /// <summary>按系统深浅切换文字与图标的配色。</summary>
+        private void ApplyForegroundPalette(bool light)
+        {
+            var primary = light ? Color.FromRgb(0x1C, 0x1C, 0x1E) : Color.FromArgb(0xF5, 0xFF, 0xFF, 0xFF);
+            var secondary = light ? Color.FromRgb(0x6B, 0x6B, 0x70) : Color.FromArgb(0x9E, 0xFF, 0xFF, 0xFF);
+            var tertiary = light ? Color.FromRgb(0xA0, 0xA0, 0xA6) : Color.FromArgb(0x6B, 0xFF, 0xFF, 0xFF);
+            var iconPrimary = light ? Color.FromRgb(0x2C, 0x2C, 0x2E) : Color.FromArgb(0xF5, 0xFF, 0xFF, 0xFF);
+            var iconSecondary = light ? Color.FromRgb(0x7A, 0x7A, 0x80) : Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF);
+
+            SetResource("TextPrimary", primary);
+            SetResource("TextSecondary", secondary);
+            SetResource("TextTertiary", tertiary);
+            SetResource("IconPrimary", iconPrimary);
+            SetResource("IconSecondary", iconSecondary);
+        }
+
+        /// <summary>更新窗口资源字典里的画刷（颜色变化时重建画刷）。</summary>
+        private void SetResource(string key, Color color)
+        {
+            if (Resources[key] is SolidColorBrush existing && existing.Color == color)
+            {
+                return;
+            }
+
+            Resources[key] = new SolidColorBrush(color);
+        }
+
+        /// <summary>
+        /// 系统深浅色变化：重刷配色。
+        /// 只改背景与前景画刷，不动玻璃层（玻璃是抓屏折射，与系统深浅无关）。
+        /// </summary>
+        private void OnSystemThemeChanged(object? sender, EventArgs e)
+        {
+            if (!_hwnd.Equals(IntPtr.Zero) && !IsVisible)
+            {
+                return;
+            }
+
+            ApplyTheme();
         }
 
         /// <summary>
@@ -679,10 +1134,11 @@ namespace Pynelith.Island.Views
             // 未授权时保持安静：不再生成模拟消息，设置页里有授权引导链接。
         }
 
-        private void OnSystemNotification(string app, string body)
+        private void OnSystemNotification(NotificationItem item)
         {
             // 不做黑白名单过滤：所有系统通知一律进入岛内展示队列
-            EnqueueMessage(app, body);
+            _history.Add(item);
+            EnqueueMessage(item);
         }
 
         #region 消息展示
@@ -691,16 +1147,15 @@ namespace Pynelith.Island.Views
         /// 收到一条消息：直接入队（不做任何黑白名单过滤）。
         /// 当前没有消息时立即展开；否则排队，等当前消息停留结束后接着展示。
         /// </summary>
-        private void EnqueueMessage(string app, string body)
+        private void EnqueueMessage(NotificationItem item)
         {
-            string text = NormalizeMessage(body);
+            string text = NormalizeMessage(item.FullText);
             if (text.Length == 0)
             {
                 return;
             }
 
-            string name = string.IsNullOrWhiteSpace(app) ? "通知" : app.Trim();
-            _messageQueue.Enqueue((name, text));
+            _messageQueue.Enqueue(item);
             while (_messageQueue.Count > 20)
             {
                 _messageQueue.Dequeue();
@@ -720,13 +1175,21 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            var (app, body) = _messageQueue.Dequeue();
+            NotificationItem item = _messageQueue.Dequeue();
+            _currentNotification = item;
 
             _messageShowing = true;
             _detail = false; // 消息结束后回到默认紧凑形态
 
-            MessageApp.Text = app;
-            MessageBody.Text = body;
+            // 面板互斥：消息面板展开时收起 Siri 透镜
+            if (_siriTarget)
+            {
+                CollapseSiri();
+            }
+
+            MessageApp.Text = item.AppName;
+            MessageBody.Text = item.FullText;
+
             ApplyMessageLayout();
 
             ApplyWindowSize();
@@ -799,6 +1262,7 @@ namespace Pynelith.Island.Views
 
             MessageApp.Text = string.Empty;
             MessageBody.Text = string.Empty;
+            _currentNotification = null;
 
             ApplyWindowSize();
             ApplyMorph(_p);
@@ -825,7 +1289,9 @@ namespace Pynelith.Island.Views
 
             // 允许消息面板占据接近整屏的高度，配合字号收缩，常见长消息都能完整放下
             double maxPreHeight = Math.Max(160, Math.Min(520, work.Height / scale - 60));
-            double chrome = 18 + 4 + 24; // 应用名行高 + 间距 + 上下内边距
+
+            // 固定 chrome：应用名行高 + 间距 + 上下内边距
+            double chrome = 18 + 4 + 24;
 
             double fontSize = 12.5;
             double bodyHeight;
@@ -896,6 +1362,14 @@ namespace Pynelith.Island.Views
             double windowWidth = Math.Max(m.DetailW, m.MediaW);
             double windowHeight = Math.Max(m.DetailH, m.IdleH);
 
+            // Siri 透镜（正圆 + 下方文字）比常规形态更高：窗口必须让出空间，
+            // 否则透镜底部与错误提示会被窗口边界裁掉。
+            if (_siri != null)
+            {
+                windowWidth = Math.Max(windowWidth, 260 * scale);
+                windowHeight = Math.Max(windowHeight, 256 * scale + 8);
+            }
+
             // 消息面板可能比常规形态更大：窗口需要临时让出足够空间，避免文本被裁切
             if (_messageShowing)
             {
@@ -908,6 +1382,10 @@ namespace Pynelith.Island.Views
 
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
+
+            // 欢迎动画层在 ContentHost 之外，需自己跟随全局缩放
+            IntroHelloScale.ScaleX = scale;
+            IntroHelloScale.ScaleY = scale;
 
             // 紧凑态文字随胶囊高度收放：36 高 ≈ 12px，更矮时自动变小，避免字被上下裁切
             double compactFont = Math.Clamp(Config.CollapsedHeight * 0.34, 7, 12);
@@ -1000,6 +1478,28 @@ namespace Pynelith.Island.Views
                 height += (_notifHeight - height) * n;
             }
 
+            // 欢迎动画：独立弹簧把胶囊撑到能容纳 hello 的尺寸，播完再收回原形。
+            // 用户可能把胶囊配置得很小，不撑开就会把 hello 裁掉。
+            double intro = Math.Clamp(_i, 0, 1);
+            if (intro > 0.0001)
+            {
+                double introWidth = 86 * scale;
+                double introHeight = 34 * scale;
+                width += (introWidth - width) * intro;
+                height += (introHeight - height) * intro;
+            }
+
+            // Siri 透镜：独立弹簧把胶囊拉到透镜尺寸（透镜是正圆 + 下方文字）
+            double siri = Math.Clamp(_s, 0, 1);
+            double siriAlpha = Math.Clamp(siri * 1.2, 0, 1);
+            if (siri > 0.0001)
+            {
+                double siriWidth = 260 * scale;
+                double siriHeight = 256 * scale;
+                width += (siriWidth - width) * siri;
+                height += (siriHeight - height) * siri;
+            }
+
             CapsuleHost.Width = width;
             CapsuleHost.Height = height;
 
@@ -1032,9 +1532,15 @@ namespace Pynelith.Island.Views
             // 未展开时更克制，展开后略微增强；
             // 媒体展开面板的下半区要完全透明，这两层覆盖（顶部柔光 / 底部暗角 / 轮廓弧线）
             // 也必须一起淡出，否则透明区会残留一层灰雾和一圈亮边。
-            double shellFade = 1.0 - Math.Clamp(mediaDetail, 0, 1);
+            // Siri 透镜接管时还要整块淡出，否则胶囊本体会露出一个方形底框。
+            double shellFade = (1.0 - Math.Clamp(mediaDetail, 0, 1)) * (1 - siriAlpha);
             CapsuleSheen.Opacity = (0.45 + 0.55 * Math.Clamp(_d, 0, 1)) * shellFade;
             CapsuleHighlight.Opacity = (0.5 + 0.5 * Math.Clamp(_d, 0, 1)) * shellFade;
+            ThemeBackdrop.Opacity = 1 - siriAlpha;
+            if (_glass != null)
+            {
+                _glass.Opacity = 1 - siriAlpha;
+            }
 
             // 四层交叉淡入：待机 ⇄ 待机展开 ⇄ 媒体紧凑 ⇄ 媒体展开
             double idleAlpha = Math.Clamp(1 - pc * 1.9, 0, 1) * Math.Clamp(1 - d * 1.8, 0, 1);
@@ -1046,14 +1552,34 @@ namespace Pynelith.Island.Views
             double notificationAlpha = Math.Clamp(n * 1.35, 0, 1);
             double baseAlpha = 1 - notificationAlpha;
 
+            // 欢迎动画期间：胶囊内只显示 hello，时间/歌词/播放控件等全部隐藏
+            if (_introActive)
+            {
+                baseAlpha = 0;
+            }
+
+            // Siri 透镜展开时：胶囊原有内容全部让位给透镜
+            if (siriAlpha > 0.001)
+            {
+                baseAlpha *= 1 - siriAlpha;
+            }
+
             idleAlpha *= baseAlpha;
             idleDetailAlpha *= baseAlpha;
             compactAlpha *= baseAlpha;
             detailAlpha *= baseAlpha;
 
-            NotificationLayer.Opacity = notificationAlpha;
+            NotificationLayer.Opacity = notificationAlpha * (1 - siriAlpha);
             // 消息展示期间接收点击：点一下即收起（不再"点了没反应"）
-            NotificationLayer.IsHitTestVisible = notificationAlpha > 0.5;
+            NotificationLayer.IsHitTestVisible = notificationAlpha > 0.5 && siriAlpha < 0.5;
+
+            // Siri 透镜：随展开度淡入并从中心"长出来"
+            SiriLensHost.Opacity = siriAlpha;
+            SiriLensHost.Visibility = siriAlpha > 0.001 ? Visibility.Visible : Visibility.Collapsed;
+            SiriLensHost.IsHitTestVisible = siriAlpha > 0.6;
+            double lensScale = 0.62 + 0.38 * Math.Clamp(siri * 1.15, 0, 1);
+            SiriLensScale.ScaleX = lensScale;
+            SiriLensScale.ScaleY = lensScale;
 
             IdleView.Opacity = idleAlpha;
             IdleView.IsHitTestVisible = idleAlpha > 0.5;
@@ -1250,6 +1776,8 @@ namespace Pynelith.Island.Views
 
             double detailTarget = _detail ? 1 : 0;
             double messageTarget = _messageTargetOn ? 1 : 0;
+            double introTarget = _introSizeTarget ? 1 : 0;
+            double siriTarget = _siriTarget ? 1 : 0;
 
             for (int i = 0; i < steps; i++)
             {
@@ -1264,16 +1792,26 @@ namespace Pynelith.Island.Views
                 double nAccel = -k * (_n - messageTarget) - c * _nv;
                 _nv += nAccel * h;
                 _n += _nv * h;
+
+                double iAccel = -k * (_i - introTarget) - c * _iv;
+                _iv += iAccel * h;
+                _i += _iv * h;
+
+                double sAccel = -k * (_s - siriTarget) - c * _sv;
+                _sv += sAccel * h;
+                _s += _sv * h;
             }
 
             bool mainSettled = Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015;
             bool detailSettled = Math.Abs(_d - detailTarget) < 0.0015 && Math.Abs(_dv) < 0.0015;
             bool messageSettled = Math.Abs(_n - messageTarget) < 0.0015 && Math.Abs(_nv) < 0.0015;
+            bool introSettled = Math.Abs(_i - introTarget) < 0.0015 && Math.Abs(_iv) < 0.0015;
+            bool siriSettled = Math.Abs(_s - siriTarget) < 0.0015 && Math.Abs(_sv) < 0.0015;
 
             // 超时兜底：极端负载下也不允许动画无限挂起，否则 Rendering 会持续占满 UI 线程
             bool timedOut = Stopwatch.GetElapsedTime(_springStartTicks) > TimeSpan.FromSeconds(2);
 
-            if (mainSettled && detailSettled && messageSettled || timedOut)
+            if (mainSettled && detailSettled && messageSettled && introSettled && siriSettled || timedOut)
             {
                 _p = _target;
                 _v = 0;
@@ -1281,6 +1819,10 @@ namespace Pynelith.Island.Views
                 _dv = 0;
                 _n = messageTarget;
                 _nv = 0;
+                _i = introTarget;
+                _iv = 0;
+                _s = siriTarget;
+                _sv = 0;
                 StopSpring();
                 ApplyMorph(_p);
 
@@ -1357,7 +1899,7 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            _settingsWindow = new SettingsWindow(_service, _lyrics, _media);
+            _settingsWindow = new SettingsWindow(_service, _lyrics, _media, _history, _siriConfig, _siri);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -1572,6 +2114,7 @@ namespace Pynelith.Island.Views
             }
 
             TimeSpan position = _media.Position;
+            TimeSpan lyricTime = position + TimeSpan.FromMilliseconds(Config.LyricOffsetMs);
 
             // 注意：TimeSpan.MinValue 取 Duration 会溢出，必须先排除首次采样
             if (_lastLyricPosition != TimeSpan.MinValue
@@ -1584,9 +2127,12 @@ namespace Pynelith.Island.Views
 
             // 严格按时间戳切换（不再提前）：提前量会让短间隔的句子"抢跑"到下一句。
             // 用户可用 LyricOffsetMs 微调整首歌词的整体偏移（正值 = 歌词提前显示）。
-            int index = doc.LineAt(position + TimeSpan.FromMilliseconds(Config.LyricOffsetMs));
+            int index = doc.LineAt(lyricTime);
+
+            // 逐字高亮：同一行内也要按时间推进，所以行没换时不能提前返回。
             if (index == _lyricIndex)
             {
+                UpdateKaraokeHighlight(doc, lyricTime, index);
                 return;
             }
 
@@ -1598,6 +2144,43 @@ namespace Pynelith.Island.Views
             {
                 _currentLyricText = text;
                 SwapLyric(text);
+            }
+
+            UpdateKaraokeHighlight(doc, lyricTime, index);
+        }
+
+        /// <summary>
+        /// 逐字（卡拉 OK）高亮：把当前行按播放进度切成「已唱 / 未唱」两段并着色。
+        /// 没有逐字时间戳时退化为整行统一颜色（不做高亮）。
+        /// </summary>
+        private void UpdateKaraokeHighlight(LrcDocument doc, TimeSpan lyricTime, int lineIndex)
+        {
+            if (_karaoke.Count == 0 || lineIndex < 0)
+            {
+                return;
+            }
+
+            var line = doc.KaraokeAt(lyricTime, lineIndex);
+            if (line == null || line.Words.Count == 0)
+            {
+                return;
+            }
+
+            // 文本与当前行不一致时说明刚切行，等 SwapLyric 之后再更新
+            if (!string.Equals(line.Text, _currentLyricText, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var (sung, unsung) = line.SplitAt(lyricTime);
+
+            foreach (var pair in _karaoke)
+            {
+                // 只更新当前可见的那一层（A/B 双缓冲里隐藏的那个不用管）
+                if (pair.Key.Opacity > 0.01)
+                {
+                    pair.Value.Update(sung, unsung);
+                }
             }
         }
 
@@ -1623,7 +2206,7 @@ namespace Pynelith.Island.Views
                 text);
         }
 
-        private static void AnimateLyricRow(
+        private void AnimateLyricRow(
             TextBlock incoming, TextBlock outgoing,
             TranslateTransform inTrans, TranslateTransform outTrans, string text)
         {
@@ -1636,18 +2219,34 @@ namespace Pynelith.Island.Views
                 outgoing.BeginAnimation(OpacityProperty, Fade(outgoing.Opacity, 0, durationMs, ease));
                 outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -10, durationMs, ease));
                 incoming.BeginAnimation(OpacityProperty, null);
-                incoming.Text = string.Empty;
+                SetLyricText(incoming, string.Empty);
                 incoming.Opacity = 0;
                 return;
             }
 
-            incoming.Text = text;
+            SetLyricText(incoming, text);
             inTrans.Y = 10;
             incoming.BeginAnimation(OpacityProperty, Fade(0, 1, durationMs, ease));
             inTrans.BeginAnimation(TranslateTransform.YProperty, Fade(10, 0, durationMs, ease));
 
             outgoing.BeginAnimation(OpacityProperty, Fade(outgoing.Opacity, 0, durationMs, ease));
             outTrans.BeginAnimation(TranslateTransform.YProperty, Fade(outTrans.Y, -10, durationMs, ease));
+        }
+
+        /// <summary>
+        /// 写入歌词文本。
+        /// 带逐字高亮的 TextBlock 不能直接设 Text（会把 Inline 结构冲掉），
+        /// 统一走 KaraokeLyricText 写入。
+        /// </summary>
+        private void SetLyricText(TextBlock block, string text)
+        {
+            if (_karaoke.TryGetValue(block, out var karaoke))
+            {
+                karaoke.SetWholeText(text);
+                return;
+            }
+
+            block.Text = text;
         }
 
         /// <summary>无动画直接设置当前可见歌词文本（清空/占位文案用）。</summary>
@@ -1670,9 +2269,9 @@ namespace Pynelith.Island.Views
             active.BeginAnimation(OpacityProperty, null);
             idle.BeginAnimation(OpacityProperty, null);
 
-            active.Text = text;
+            SetLyricText(active, text);
             active.Opacity = string.IsNullOrEmpty(text) ? 0 : 1;
-            idle.Text = string.Empty;
+            SetLyricText(idle, string.Empty);
             idle.Opacity = 0;
             (active == a ? tA : tB).Y = 0;
             (idle == a ? tA : tB).Y = 0;
@@ -1760,6 +2359,24 @@ namespace Pynelith.Island.Views
         /// </summary>
         private void OnIslandKeyDown(object sender, KeyEventArgs e)
         {
+            // Siri 透镜展开时优先响应 Esc / 空格（停止生成）
+            if (_siriTarget)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    CollapseSiri();
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.Space && _siri?.Snapshot.IsBusy == true)
+                {
+                    _siri.StopGeneration();
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             if (!_detail || _messageShowing || !_mediaMode)
             {
                 return;
@@ -1948,10 +2565,16 @@ namespace Pynelith.Island.Views
 
         #region 停靠定位与拖动
 
-        /// <summary>停靠：水平居中于工作区，垂直贴屏幕物理顶（参考图贴顶），再叠加配置偏移。</summary>
+        /// <summary>
+        /// 停靠：水平居中于工作区，垂直贴屏幕物理顶（参考图贴顶），再叠加配置偏移。
+        ///
+        /// 多屏 / 混合缩放：不用 <c>SystemParameters.WorkArea</c>（它只返回主屏），
+        /// 改为按配置指定（或自动推断）的那一块显示器来算位置，
+        /// 并用那块屏自己的 DPI 做换算，避免在 150% + 100% 混合缩放下算错坐标。
+        /// </summary>
         private void Reposition()
         {
-            Rect work = SystemParameters.WorkArea;
+            Rect work = TargetWorkArea().WorkArea;
             double centeredLeft = work.Left + (work.Width - Width) * 0.5;
             double left = Math.Round(centeredLeft + Config.ScreenOffsetX);
 
@@ -1964,9 +2587,51 @@ namespace Pynelith.Island.Views
             Top = Math.Round(Config.ScreenOffsetY);
         }
 
+        /// <summary>
+        /// 岛应该停在哪块屏上。
+        /// 配置了 MonitorIndex 就用那一块；没配置就跟随岛当前所在的显示器
+        /// （这样在多屏之间拖动时，水平居中会按新屏的工作区重算）。
+        /// </summary>
+        private MonitorInfo TargetWorkArea()
+        {
+            var monitors = MonitorService.GetMonitors();
+            if (monitors.Count == 0)
+            {
+                return new MonitorInfo
+                {
+                    IsPrimary = true,
+                    WorkArea = SystemParameters.WorkArea,
+                    DpiScale = 1.0,
+                };
+            }
+
+            // 指定了屏：按序号取；序号越界（拔掉了显示器）时退回主屏
+            if (Config.MonitorIndex >= 0)
+            {
+                if (Config.MonitorIndex < monitors.Count)
+                {
+                    return monitors[Config.MonitorIndex];
+                }
+
+                foreach (var monitor in monitors)
+                {
+                    if (monitor.IsPrimary)
+                    {
+                        return monitor;
+                    }
+                }
+
+                return monitors[0];
+            }
+
+            // 自动：跟随岛当前所在位置
+            var current = MonitorService.GetMonitorAt(new Point(Left + Width * 0.5, Top + Height * 0.5));
+            return current;
+        }
+
         private void PersistScreenOffset()
         {
-            Rect work = SystemParameters.WorkArea;
+            Rect work = TargetWorkArea().WorkArea;
             double centeredLeft = work.Left + (work.Width - Width) * 0.5;
 
             Config.ScreenOffsetX = Math.Round(Left - centeredLeft);
@@ -2029,6 +2694,17 @@ namespace Pynelith.Island.Views
                     // 点击正在展示的消息：立即平滑收起，并清掉排队中的后续消息
                     DismissMessages();
                 }
+                else if (_siriTarget)
+                {
+                    // Siri 透镜已展开：点胶囊收起它（光带先收拢变暗再缩回）
+                    CollapseSiri();
+                    Reposition();
+                }
+                else if (_siri != null && IsSiriDotHit(e.GetPosition(this)))
+                {
+                    // 点击胶囊右端的 Siri 光点：展开透镜并开始收音
+                    TriggerSiriVoice();
+                }
                 else
                 {
                     // 左键点击胶囊本体：待机时展开大时钟，播放时展开曲目详情（按钮点击已被过滤）
@@ -2038,19 +2714,47 @@ namespace Pynelith.Island.Views
             }
         }
 
+        /// <summary>
+        /// 判断点击是否落在可交互控件上（按钮 / 输入框）。
+        ///
+        /// 注意：歌词用 Inline / Run 渲染，鼠标命中的 OriginalSource 可能是 Run 这类
+        /// <see cref="ContentElement"/> —— 它不是 Visual，直接调 <see cref="VisualTreeHelper.GetParent"/>
+        /// 会抛 InvalidOperationException。这里按节点类型分别走视觉树与内容树。
+        /// </summary>
         private static bool IsInteractive(DependencyObject? source)
         {
-            while (source != null)
+            DependencyObject? node = source;
+            int guard = 0;
+
+            // guard 只防异常数据导致死循环，正常 DOM 深度远小于 256
+            while (node != null && guard++ < 256)
             {
-                if (source is ButtonBase || source is TextBox)
+                if (node is ButtonBase || node is TextBox)
                 {
                     return true;
                 }
 
-                source = VisualTreeHelper.GetParent(source);
+                node = ParentOf(node);
             }
 
             return false;
+        }
+
+        /// <summary>取父节点：Visual 走视觉树，ContentElement（Run / Inline）走内容树。</summary>
+        private static DependencyObject? ParentOf(DependencyObject node)
+        {
+            if (node is Visual || node is System.Windows.Media.Media3D.Visual3D)
+            {
+                return VisualTreeHelper.GetParent(node);
+            }
+
+            if (node is ContentElement content)
+            {
+                return ContentOperations.GetParent(content)
+                    ?? (content as FrameworkContentElement)?.Parent;
+            }
+
+            return null;
         }
 
         #endregion
@@ -2136,12 +2840,23 @@ namespace Pynelith.Island.Views
             _media.StateChanged -= OnMediaStateChanged;
             _lyrics.ManualImported -= OnLyricsManualImported;
             _lyricLookupCts?.Cancel();
+            SystemEvents.SessionSwitch -= OnSessionSwitch;
 
             _feed.Dispose();
             _bridge?.Dispose();
+            _history.Dispose();
+
+            if (_systemTheme != null)
+            {
+                _systemTheme.ThemeChanged -= OnSystemThemeChanged;
+                _systemTheme.Dispose();
+                _systemTheme = null;
+            }
 
             _metrics.Updated -= OnMetricsUpdated;
             _metrics.Dispose();
+
+            DisposeSiri();
 
             _glass?.Dispose();
             _glass = null;

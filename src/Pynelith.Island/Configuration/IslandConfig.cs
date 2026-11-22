@@ -34,6 +34,9 @@ namespace Pynelith.Island.Configuration
         private bool _showIdleHint = true;
         private bool _showSystemMetrics = true;
         private bool _screenshotCompatible;
+        private string _progressOffsetPresetId = string.Empty;
+        private int _monitorIndex = -1;
+        private bool _followSystemTheme = true;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -203,6 +206,36 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _screenshotCompatible, value);
         }
 
+        /// <summary>
+        /// 进度对齐预设 id（对应 <c>PlayerOffsetPresets</c>）。
+        /// 空串 = 不套用预设，使用纯推算进度。
+        /// </summary>
+        public string ProgressOffsetPresetId
+        {
+            get => _progressOffsetPresetId;
+            set => Set(ref _progressOffsetPresetId, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// 停靠的显示器序号（对应 <c>MonitorService.GetMonitors()</c> 的顺序）。
+        /// -1 = 自动（跟随当前所在的显示器）。
+        /// </summary>
+        public int MonitorIndex
+        {
+            get => _monitorIndex;
+            set => Set(ref _monitorIndex, Math.Clamp(value, -1, 15));
+        }
+
+        /// <summary>
+        /// 是否跟随系统的深浅色模式自动切换配色。
+        /// 开启后，系统切到浅色时纯黑 / 磨砂主题会自动换成浅色配色。
+        /// </summary>
+        public bool FollowSystemTheme
+        {
+            get => _followSystemTheme;
+            set => Set(ref _followSystemTheme, value);
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -230,6 +263,9 @@ namespace Pynelith.Island.Configuration
             ShowIdleHint = defaults.ShowIdleHint;
             ShowSystemMetrics = defaults.ShowSystemMetrics;
             ScreenshotCompatible = defaults.ScreenshotCompatible;
+            ProgressOffsetPresetId = defaults.ProgressOffsetPresetId;
+            MonitorIndex = defaults.MonitorIndex;
+            FollowSystemTheme = defaults.FollowSystemTheme;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
