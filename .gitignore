@@ -44,6 +44,9 @@ packages/*
 .idea/
 *.code-workspace
 
+# 插件编译产物投放目录（由 plugins\ 下的工程编译后生成，随 bin 一起打包）
+src/Pynelith.Island/Plugins/
+
 # OS 垃圾文件
 Thumbs.db
 .DS_Store

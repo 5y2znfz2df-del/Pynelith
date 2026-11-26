@@ -112,7 +112,7 @@ namespace Pynelith.Island.Views
                     });
 
                 // 重建后要把当前光带状态推一次，否则要等下一次 Tick 才有亮度
-                _siriGlass.SetState(_siriGlowIntensity, _siriGlowCollapse, Math.Clamp(_s, 0, 1));
+                _siriGlass.SetState(_siriGlowIntensity, _siriGlowCollapse, Math.Clamp(_siriSpring.Value, 0, 1));
             }
             catch (Exception)
             {
@@ -258,7 +258,7 @@ namespace Pynelith.Island.Views
             _siriGlowCollapse = 0;
 
             EnsureSpring();
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
             _siriGlowTimer?.Start();
         }
 
@@ -287,7 +287,7 @@ namespace Pynelith.Island.Views
                 _siriTarget = false;
                 _siriCollapsing = false;
                 EnsureSpring();
-                ApplyMorph(_p);
+                ApplyMorph(_morphSpring.Value);
 
                 // 面板收起即结束本次会话：停麦、停止生成
                 _siri?.Collapse();
@@ -373,7 +373,7 @@ namespace Pynelith.Island.Views
             _siriGlowIntensity = intensity;
             _siriGlowCollapse = collapse;
 
-            _siriGlass?.SetState(intensity, collapse, Math.Clamp(_s, 0, 1));
+            _siriGlass?.SetState(intensity, collapse, Math.Clamp(_siriSpring.Value, 0, 1));
 
             // 面板已完全收起：停掉 60fps 的光带定时器，把开销降到零。
             // 下次展开（唤醒 / 快捷键 / 点光点）时再启动。

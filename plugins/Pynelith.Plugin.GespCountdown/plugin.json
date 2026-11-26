@@ -1,0 +1,16 @@
+{
+  "id": "gesp-countdown",
+  "name": "GESP 倒计时",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "距 GESP 认证考试还有多少天；改 plugin.json 的 targetDate 即可换成任意考试 / 截止日期。",
+  "kind": "MonitorSource",
+  "entryAssembly": "Pynelith.Plugin.GespCountdown.dll",
+  "entryType": "Pynelith.Plugin.GespCountdown.GespCountdownPlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "label": "GESP",
+    "targetDate": "2026-03-21",
+    "targetTime": "09:00"
+  }
+}

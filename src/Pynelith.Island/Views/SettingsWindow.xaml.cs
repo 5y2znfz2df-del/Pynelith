@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using Microsoft.Win32;
 using Pynelith.Island.Configuration;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
+using Pynelith.Island.Services.Plugins;
 using Pynelith.Island.Services.Siri;
+using Pynelith.Plugins;
 
 namespace Pynelith.Island.Views
 {
@@ -33,6 +38,11 @@ namespace Pynelith.Island.Views
         private readonly NotificationHistoryStore _history;
         private readonly SiriConfig _siriConfig;
         private readonly SiriService? _siri;
+        private readonly PluginManager _plugins;
+        private readonly PluginCatalogService _pluginCatalog;
+        private StackPanel? _pluginListHost;
+        private StackPanel? _catalogHost;
+        private TextBlock? _catalogStatus;
         private SiriSpeaker? _previewSpeaker;
         private readonly List<Action> _refreshers = new List<Action>();
         private readonly Dictionary<string, UIElement> _pages = new Dictionary<string, UIElement>();
@@ -53,6 +63,8 @@ namespace Pynelith.Island.Views
             MediaSessionService media,
             NotificationHistoryStore history,
             SiriConfig siriConfig,
+            PluginManager plugins,
+            PluginCatalogService pluginCatalog,
             SiriService? siri = null)
         {
             _service = service;
@@ -60,6 +72,8 @@ namespace Pynelith.Island.Views
             _media = media;
             _history = history;
             _siriConfig = siriConfig;
+            _plugins = plugins;
+            _pluginCatalog = pluginCatalog;
             _siri = siri;
 
             InitializeComponent();
@@ -163,6 +177,7 @@ namespace Pynelith.Island.Views
                 NewEntry("size", "尺寸与位置", "⇲", LinearGradient("#64D2FF", "#0A84FF")),
                 NewEntry("notify", "通知与提示", "🔔", LinearGradient("#FF6961", "#FF3B30")),
                 NewEntry("music", "音乐", "♫", LinearGradient("#FF6482", "#FF2D55")),
+                NewEntry("plugins", "插件", "◫", LinearGradient("#5E5CE6", "#3634A3")),
                 NewEntry("siri", "Siri", "◉", LinearGradient("#FF9F0A", "#FF6B00")),
             };
 
@@ -262,6 +277,7 @@ namespace Pynelith.Island.Views
             _pages["size"] = BuildSizePage();
             _pages["notify"] = BuildNotifyPage();
             _pages["music"] = BuildMusicPage();
+            _pages["plugins"] = BuildPluginsPage();
             _pages["siri"] = BuildSiriPage();
         }
 
@@ -270,9 +286,40 @@ namespace Pynelith.Island.Views
             var page = NewPage();
 
             var island = NewGroup(page, "灵动岛");
+            AddSegmented(island, "动画帧率",
+                new[] { ("60", "60 fps"), ("30", "30 fps"), ("0", "关闭") },
+                () => Config.AnimationFps.ToString(),
+                v => Config.AnimationFps = int.TryParse(v, out int fps) ? fps : 60);
             AddStepper(island, "动画时长 (ms)", 0, 800, 20, 0,
                 () => Config.AnimationDurationMs, v => Config.AnimationDurationMs = (int)Math.Round(v));
-            AddNote(island, "产品定位", "桌面顶部的轻量状态胶囊：时间 + CPU/内存；有音乐时自动接管显示");
+            AddToggle(island, "悬停自动展开",
+                () => Config.HoverExpand, v => Config.HoverExpand = v);
+            AddToggle(island, "全屏应用时自动隐藏",
+                () => Config.HideInFullscreen, v => Config.HideInFullscreen = v);
+            AddNote(island, "性能建议",
+                "老笔记本把动画帧率降到 30 fps 或关闭，形变会直接落位，不再逐帧重绘弹簧与玻璃采样。");
+            AddNote(island, "全屏降载",
+                "检测到游戏 / 全屏视频在前台时，岛屿自动隐藏并停掉全部刷新定时器与抓屏采样，"
+                + "退出全屏后自动恢复，避免抢 GPU 造成掉帧。");
+
+            var hotkey = NewGroup(page, "显示 / 隐藏");
+            AddToggle(hotkey, "启用全局快捷键",
+                () => Config.VisibilityHotkeyEnabled, v => Config.VisibilityHotkeyEnabled = v);
+            AddTextBox(hotkey, "快捷键",
+                () => Config.VisibilityHotkey, v => Config.VisibilityHotkey = v);
+            AddNote(hotkey, "格式", "修饰键 + 字母/数字/F1~F24，例如 Ctrl+Alt+H；修改后立即生效。");
+            AddNote(hotkey, "产品定位", "桌面顶部的轻量状态胶囊：时间 + CPU/内存；有音乐时自动接管显示");
+
+            var tools = NewGroup(page, "工具面板");
+            AddToggle(tools, "剪贴板历史",
+                () => Config.ShowClipboardHistory, v => Config.ShowClipboardHistory = v);
+            AddToggle(tools, "代码计时器",
+                () => Config.ShowCodeTimer, v => Config.ShowCodeTimer = v);
+            AddStepper(tools, "历史保留条数", 1, 100, 1, 0,
+                () => Config.ClipboardHistoryLimit, v => Config.ClipboardHistoryLimit = (int)Math.Round(v));
+            AddDescription(tools,
+                "在岛上右键「工具面板」打开：计时器复用 1 秒节拍，剪贴板监听由系统消息驱动、"
+                + "不轮询；关闭剪贴板历史后连监听窗口都不会创建。");
 
             var config = NewGroup(page, "配置");
             AddNote(config, "配置文件", _service.ConfigPath);
@@ -787,6 +834,341 @@ namespace Pynelith.Island.Views
             {
                 MessageBox.Show(this, "导入失败：" + ex.Message, "Pynelith",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        #endregion
+
+        #region 插件页
+
+        private UIElement BuildPluginsPage()
+        {
+            var page = NewPage();
+
+            var setup = NewGroup(page, "插件");
+            AddButton(setup, "导入插件包…", ImportPluginPackage);
+            AddTextBox(setup, "插件市场地址", () => Config.PluginCatalogUrl, v => Config.PluginCatalogUrl = v);
+            AddButton(setup, "刷新插件市场", () => _ = RefreshCatalogAsync());
+            AddDescription(setup,
+                "只支持四类插件：通知源、监控源、AI 后端、动画皮肤。导入或切换后立即生效，无需重启主程序。");
+
+            var catalogGroup = NewGroup(page, "插件市场");
+            var catalogRows = new StackPanel { Margin = new Thickness(14, 10, 14, 12) };
+            _catalogStatus = new TextBlock
+            {
+                Text = "未获取",
+                FontSize = 11,
+                Foreground = TextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            _catalogHost = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
+            catalogRows.Children.Add(_catalogStatus);
+            catalogRows.Children.Add(_catalogHost);
+            catalogGroup.Children.Add(catalogRows);
+
+            var installed = NewGroup(page, "已安装插件");
+            _pluginListHost = new StackPanel { Margin = new Thickness(14, 6, 14, 10) };
+            installed.Children.Add(_pluginListHost);
+
+            _refreshers.Add(RefreshPluginList);
+            RefreshPluginList();
+            _ = RefreshCatalogAsync();
+            return page;
+        }
+
+        private void RefreshPluginList()
+        {
+            if (_pluginListHost == null)
+            {
+                return;
+            }
+
+            _pluginListHost.Children.Clear();
+
+            IReadOnlyList<PluginDescriptor> plugins = _plugins.Plugins;
+            if (plugins.Count == 0)
+            {
+                _pluginListHost.Children.Add(new TextBlock
+                {
+                    Text = "还没有安装插件。可以从上方导入 zip 包，或把插件解压到用户插件目录。",
+                    FontSize = 11,
+                    Foreground = TextSecondary,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 4),
+                });
+                return;
+            }
+
+            bool first = true;
+            foreach (PluginDescriptor plugin in plugins)
+            {
+                if (!first)
+                {
+                    _pluginListHost.Children.Add(new Border
+                    {
+                        Height = 1,
+                        Background = DividerBrush,
+                    });
+                }
+
+                first = false;
+                _pluginListHost.Children.Add(BuildPluginRow(plugin));
+            }
+        }
+
+        private UIElement BuildPluginRow(PluginDescriptor plugin)
+        {
+            var grid = new Grid { MinHeight = 54 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var left = new StackPanel
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 7, 8, 7),
+            };
+            left.Children.Add(new TextBlock
+            {
+                Text = plugin.Manifest.Name + "  v" + plugin.Manifest.Version,
+                FontSize = 13,
+                Foreground = TextPrimary,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+
+            string state = plugin.State switch
+            {
+                PluginState.Loaded => string.Format("已加载 · {0:0.0} ms", plugin.LoadMilliseconds),
+                PluginState.Failed => "加载失败",
+                PluginState.Invalid => "插件清单无效",
+                _ => "已禁用",
+            };
+            left.Children.Add(new TextBlock
+            {
+                Text = KindText(plugin.Manifest.Kind) + " · " + state,
+                FontSize = 11,
+                Foreground = TextSecondary,
+                Margin = new Thickness(0, 2, 0, 0),
+            });
+
+            if (!string.IsNullOrEmpty(plugin.Manifest.Description))
+            {
+                left.Children.Add(new TextBlock
+                {
+                    Text = plugin.Manifest.Description,
+                    FontSize = 11,
+                    Foreground = TextSecondary,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 2, 0, 0),
+                });
+            }
+
+            if (!string.IsNullOrEmpty(plugin.Error))
+            {
+                left.Children.Add(new TextBlock
+                {
+                    Text = plugin.Error,
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x69, 0x61)),
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 2, 0, 0),
+                });
+            }
+
+            grid.Children.Add(left);
+
+            var right = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var toggle = new CheckBox
+            {
+                Style = (Style)FindResource("IosToggle"),
+                IsChecked = plugin.State == PluginState.Loaded,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0),
+            };
+            string id = plugin.Manifest.Id;
+            toggle.Click += (_, _) =>
+            {
+                if (_loading)
+                {
+                    return;
+                }
+
+                _plugins.SetEnabled(id, toggle.IsChecked == true);
+                RefreshPluginList();
+            };
+            right.Children.Add(toggle);
+
+            var uninstall = new Button
+            {
+                Content = "卸载",
+                Cursor = Cursors.Hand,
+                Foreground = TextPrimary,
+                FontSize = 11,
+                Padding = new Thickness(10, 4, 10, 4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Template = DarkButtonTemplate(),
+            };
+            uninstall.Click += (_, _) =>
+            {
+                if (_plugins.Uninstall(id))
+                {
+                    RefreshPluginList();
+                }
+            };
+            right.Children.Add(uninstall);
+
+            Grid.SetColumn(right, 1);
+            grid.Children.Add(right);
+            return grid;
+        }
+
+        private static string KindText(PluginKind kind) => kind switch
+        {
+            PluginKind.NotificationSource => "通知源",
+            PluginKind.MonitorSource => "监控源",
+            PluginKind.AiBackend => "AI 后端",
+            PluginKind.Skin => "动画皮肤",
+            _ => "未知类型",
+        };
+
+        private void ImportPluginPackage()
+        {
+            var dialog = new OpenFileDialog
+            {
+                Title = "选择插件包",
+                Filter = "插件包 (*.zip)|*.zip|所有文件 (*.*)|*.*",
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            PluginImportResult result = PluginInstaller.ImportZip(dialog.FileName, _plugins.UserPluginRoot);
+            if (!result.Success)
+            {
+                ShowCatalogStatus("导入失败：" + result.Error);
+                return;
+            }
+
+            // 重新扫描全部插件：同 id 的用户版本会覆盖内置版本，新插件立即装载
+            _plugins.LoadAll();
+            RefreshPluginList();
+            ShowCatalogStatus("已导入 " + result.PluginId + "，无需重启已生效");
+        }
+
+        private async Task RefreshCatalogAsync()
+        {
+            if (_catalogHost == null)
+            {
+                return;
+            }
+
+            ShowCatalogStatus("正在获取插件市场…");
+
+            PluginCatalogResult result = await _pluginCatalog
+                .GetCatalogAsync(Config.PluginCatalogUrl, CancellationToken.None);
+
+            _catalogHost.Children.Clear();
+
+            if (!string.IsNullOrEmpty(result.Message))
+            {
+                ShowCatalogStatus(result.Message);
+            }
+            else
+            {
+                ShowCatalogStatus(result.Entries.Count == 0
+                    ? "插件市场暂无内容"
+                    : "共 " + result.Entries.Count + " 个插件");
+            }
+
+            foreach (PluginCatalogEntry entry in result.Entries)
+            {
+                _catalogHost.Children.Add(BuildCatalogRow(entry));
+            }
+        }
+
+        private UIElement BuildCatalogRow(PluginCatalogEntry entry)
+        {
+            var grid = new Grid { MinHeight = 48, Margin = new Thickness(0, 4, 0, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            left.Children.Add(new TextBlock
+            {
+                Text = entry.Name + "  v" + entry.Version,
+                FontSize = 12.5,
+                Foreground = TextPrimary,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            left.Children.Add(new TextBlock
+            {
+                Text = KindText(entry.Kind) + " · " + entry.Description,
+                FontSize = 11,
+                Foreground = TextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            grid.Children.Add(left);
+
+            var install = new Button
+            {
+                Content = "安装",
+                Cursor = Cursors.Hand,
+                Foreground = TextPrimary,
+                FontSize = 11,
+                Padding = new Thickness(12, 4, 12, 4),
+                VerticalAlignment = VerticalAlignment.Center,
+                Template = DarkButtonTemplate(),
+            };
+            install.Click += (_, _) => _ = InstallFromCatalogAsync(entry);
+            Grid.SetColumn(install, 1);
+            grid.Children.Add(install);
+
+            return grid;
+        }
+
+        private async Task InstallFromCatalogAsync(PluginCatalogEntry entry)
+        {
+            ShowCatalogStatus("正在下载 " + entry.Name + "…");
+
+            string? zipPath = await _pluginCatalog.DownloadAsync(entry, CancellationToken.None);
+            if (zipPath == null)
+            {
+                ShowCatalogStatus("下载失败或 SHA-256 校验不通过：" + entry.Name);
+                return;
+            }
+
+            PluginImportResult result = PluginInstaller.ImportZip(zipPath, _plugins.UserPluginRoot);
+            try
+            {
+                System.IO.File.Delete(zipPath);
+            }
+            catch (Exception)
+            {
+                // 临时文件清理失败不影响安装结果
+            }
+
+            if (!result.Success)
+            {
+                ShowCatalogStatus("安装失败：" + result.Error);
+                return;
+            }
+
+            _plugins.LoadAll();
+            RefreshPluginList();
+            ShowCatalogStatus("已安装 " + entry.Name + "，无需重启已生效");
+        }
+
+        private void ShowCatalogStatus(string text)
+        {
+            if (_catalogStatus != null)
+            {
+                _catalogStatus.Text = text;
             }
         }
 

@@ -28,6 +28,8 @@
   <ItemGroup>
     <!-- 渲染能力全部来自渲染模块的公开门面，本模块不引用任何渲染内部实现 -->
     <ProjectReference Include="..\Pynelith.Glass\Pynelith.Glass.csproj" />
+    <!-- 插件契约（零依赖 netstandard2.0）：第三方插件只需引用这一个包 -->
+    <ProjectReference Include="..\Pynelith.Plugins.Abstractions\Pynelith.Plugins.Abstractions.csproj" />
   </ItemGroup>
 
   <!-- Siri 组件的第三方依赖：
@@ -36,6 +38,7 @@
        两者都只在用户启用 Siri 组件时才真正被加载。 -->
   <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Vosk" Version="0.3.38" />
     <!-- 系统离线语音：在线神经网络语音失败时兜底播报 -->
     <PackageReference Include="System.Speech" Version="8.0.0" />
@@ -61,5 +64,35 @@
       <Link>Assets\pynelith.ico</Link>
     </Resource>
   </ItemGroup>
+
+  <!-- 内置示例插件：仅参与构建排序（插件工程编译完会把 DLL + plugin.json 投放到 Plugins\）。
+       不引用其程序集——插件与宿主只通过 Pynelith.Plugins.Abstractions 契约通信。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.Weather\Pynelith.Plugin.Weather.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.GespCountdown\Pynelith.Plugin.GespCountdown.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.DdcBrightness\Pynelith.Plugin.DdcBrightness.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.BluetoothBattery\Pynelith.Plugin.BluetoothBattery.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.JianyingShortcut\Pynelith.Plugin.JianyingShortcut.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- 把 Plugins\ 整棵目录同步到 bin 与 publish 输出。
+       放在 Target 内求值（而不是顶层 ItemGroup），才能拿到本轮刚编译出来的插件文件。 -->
+  <Target Name="CopyBundledPlugins" AfterTargets="Build">
+    <ItemGroup>
+      <BundledPluginFile Include="$(MSBuildProjectDirectory)\Plugins\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BundledPluginFile)"
+          DestinationFiles="@(BundledPluginFile->'$(OutDir)Plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyBundledPluginsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <BundledPluginFilePublish Include="$(MSBuildProjectDirectory)\Plugins\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BundledPluginFilePublish)"
+          DestinationFiles="@(BundledPluginFilePublish->'$(PublishDir)Plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

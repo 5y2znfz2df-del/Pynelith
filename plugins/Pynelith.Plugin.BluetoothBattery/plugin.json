@@ -1,0 +1,15 @@
+{
+  "id": "bluetooth-battery",
+  "name": "蓝牙电量",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "读取已连接蓝牙耳机 / 鼠标的电量（骨架：轮询与文案已就绪，设备枚举需接入 Windows.Devices.Bluetooth）。",
+  "kind": "MonitorSource",
+  "entryAssembly": "Pynelith.Plugin.BluetoothBattery.dll",
+  "entryType": "Pynelith.Plugin.BluetoothBattery.BluetoothBatteryPlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "label": "蓝牙",
+    "deviceName": ""
+  }
+}

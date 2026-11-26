@@ -22,6 +22,7 @@ using Pynelith.Island.Models;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
+using Pynelith.Island.Services.Plugins;
 using Pynelith.Island.Services.Siri;
 
 namespace Pynelith.Island.Views
@@ -37,9 +38,13 @@ namespace Pynelith.Island.Views
     /// </summary>
     public partial class IslandWindow : Window
     {
-        private const double SpringZeta = 0.92;    // 阻尼比：接近临界阻尼，收尾干脆不过冲
-        private const double MinResponse = 0.12;   // 弹簧响应下限（秒）
-        private const double MaxFrameDelta = 0.05; // 单帧最大步长（秒），防止时间跳变导致的位置突跳
+        private const double SpringZeta = 0.92;     // 形态 / 欢迎：接近临界阻尼，收尾干脆
+        private const double DetailZeta = 0.70;     // 详情展开：允许轻微回弹，最接近 Apple 面板手感
+        private const double MessageZeta = 0.82;    // 消息面板：回弹克制，避免文字跟着晃
+        private const double SiriZeta = 0.72;       // Siri 透镜：弹性略强，像果冻一样弹出
+        private const double BounceHeadroom = 1.05; // 窗口预留的回弹余量，避免过冲被窗口边界裁掉
+        private const double MinResponse = 0.12;    // 弹簧响应下限（秒）
+        private const double MaxFrameDelta = 0.05;  // 单帧最大步长（秒），防止时间跳变导致的位置突跳
 
         private static readonly CultureInfo ZhCulture = CultureInfo.GetCultureInfo("zh-CN");
 
@@ -57,10 +62,13 @@ namespace Pynelith.Island.Views
         private readonly LyricsService _lyrics;
         private readonly MockFeed _feed;
         private readonly SystemMetricsService _metrics;
+        private readonly SystemStatusService _status = new SystemStatusService();
         private readonly DispatcherTimer _clockTimer;
         private readonly DispatcherTimer _lyricTimer;
         private readonly DispatcherTimer _topmostTimer;
         private readonly DispatcherTimer _springTimer;
+        private readonly FullscreenWatcher _fullscreen = new FullscreenWatcher();
+        private bool _hiddenByFullscreen;
         private readonly RectangleGeometry _capsuleClip = new RectangleGeometry();
         private readonly RectangleGeometry _highlightGeometry = new RectangleGeometry();
         private readonly RectangleGeometry _topArcGeometry = new RectangleGeometry();
@@ -74,10 +82,13 @@ namespace Pynelith.Island.Views
         // 空闲态内容实测宽度（时间 + 待机文字 + 监控），确保胶囊始终包得住内容
         private double _idleMinWidth;
 
-        // 弹簧状态：p 为媒体态进度 0..1（允许过冲）
-        private double _p;
-        private double _v;
-        private double _target;
+        // 弹簧通道：形态进度 / 详情展开 / 消息面板 / 欢迎撑开 / Siri 透镜。
+        // 每条通道独立积分、互不牵连；只改目标不清速度，因此动画可被随时打断并自然接管。
+        private readonly SpringChannel _morphSpring = new SpringChannel { Zeta = SpringZeta };
+        private readonly SpringChannel _detailSpring = new SpringChannel { Zeta = DetailZeta };
+        private readonly SpringChannel _messageSpring = new SpringChannel { Zeta = MessageZeta };
+        private readonly SpringChannel _introSpring = new SpringChannel { Zeta = SpringZeta };
+        private readonly SpringChannel _siriSpring = new SpringChannel { Zeta = SiriZeta };
         private bool _springRunning;
         private long _lastFrameTicks;
 
@@ -86,6 +97,8 @@ namespace Pynelith.Island.Views
         private bool _pressActive;
         private bool _metricsRunning;
         private Point _pressPoint;
+        private DispatcherTimer? _hoverExpandTimer;
+        private DispatcherTimer? _hoverCollapseTimer;
         private double _lastGlassWidth = -1;
         private double _lastGlassHeight = -1;
         private double _lastGlassRadius = -1;
@@ -94,31 +107,23 @@ namespace Pynelith.Island.Views
         private int _glassFrameSkip;
         private long _springStartTicks;
 
-        // 详情展开弹簧（与主弹簧共用参数）：_d 为展开度 0..1
+        // 详情展开状态
         private bool _detail;
-        private double _d;
-        private double _dv;
 
-        // 消息展示：_n 为消息面板展开度 0..1，独立的弹簧通道
+        // 消息展示：_messageSpring 为消息面板展开度，独立的弹簧通道
         private readonly Queue<NotificationItem> _messageQueue = new Queue<NotificationItem>();
         private readonly DispatcherTimer _messageHoldTimer;
         private bool _messageTargetOn;
         private bool _messageShowing;
-        private double _n;
-        private double _nv;
         private double _notifWidth = 300;
         private double _notifHeight = 96;
 
-        // 欢迎动画期间的胶囊撑开：_i 为展开度 0..1，独立的弹簧通道。
+        // 欢迎动画期间的胶囊撑开：_introSpring 为展开度，独立的弹簧通道。
         // 用户可能把胶囊收得很小（如 58×22），放不下 hello，因此动画期间临时撑开。
         private bool _introSizeTarget;
-        private double _i;
-        private double _iv;
 
-        // Siri 透镜面板：_s 为展开度 0..1，独立的弹簧通道（与详情 / 消息互斥）。
+        // Siri 透镜面板：_siriSpring 为展开度，独立的弹簧通道（与详情 / 消息互斥）。
         private bool _siriTarget;
-        private double _s;
-        private double _sv;
         private bool _siriCollapsing;
 
         // Siri 组件（可插拔、可单独禁用）
@@ -135,6 +140,20 @@ namespace Pynelith.Island.Views
 
         // 通知历史（按应用分组，持久化到磁盘）
         private readonly NotificationHistoryStore _history = new NotificationHistoryStore();
+
+        // 轻量插件宿主：四类插件（通知源 / 监控源 / AI 后端 / 动画皮肤），加载失败只影响自身
+        private readonly PluginManager _plugins;
+        private readonly PluginCatalogService _pluginCatalog = new PluginCatalogService();
+
+        // 工具面板：代码计时器 + 剪贴板历史。
+        // 剪贴板用系统消息事件驱动（不是轮询），关掉开关后连监听窗口都不创建。
+        private readonly ClipboardHistory _clipboard = new ClipboardHistory();
+        private readonly CodeTimerService _codeTimer = new CodeTimerService();
+        private ClipboardWatcher? _clipboardWatcher;
+        private bool _toolsOpen;
+
+        private static readonly Brush ToolsRowHoverBrush =
+            new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF));
 
         // 系统深浅色监听（跟随系统自动换配色）
         private SystemThemeService? _systemTheme;
@@ -164,6 +183,8 @@ namespace Pynelith.Island.Views
             new SolidColorBrush(Color.FromArgb(0xA6, 0xFF, 0xFF, 0xFF));
 
         private IntPtr _hwnd;
+        private HwndSource? _visibilityHotkeySource;
+        private bool _hiddenByUser;
         private bool _dockGuardActive;
 
         private string _trackFingerprint = string.Empty;
@@ -187,7 +208,9 @@ namespace Pynelith.Island.Views
         /// 用户关闭系统动画后，形变与消息面板直接落位，不再做逐帧弹簧。
         /// </summary>
         private int EffectiveAnimationMs
-            => SystemParameters.ClientAreaAnimation ? Config.AnimationDurationMs : 0;
+            => SystemParameters.ClientAreaAnimation && Config.AnimationFps > 0
+                ? Config.AnimationDurationMs
+                : 0;
 
         /// <summary>定时器回调保护：单次歌词/时钟异常不应直接崩溃整个宿主。</summary>
         private static void Guarded(Action action)
@@ -242,6 +265,17 @@ namespace Pynelith.Island.Views
             _feed = new MockFeed(Config, notificationsEnabled: false);
             SetupBridge();
 
+            // ---- 插件宿主：扫描 Plugins\ 与用户插件目录，启用项立即加载 ----
+            _plugins = new PluginManager(AppContext.BaseDirectory);
+            _plugins.NotificationReceived += OnPluginNotification;
+            _plugins.MetricsUpdated += OnPluginMetricsUpdated;
+
+            // ---- 工具面板：剪贴板监听 + 代码计时器 ----
+            _clipboard.Limit = Config.ClipboardHistoryLimit;
+            _clipboard.Changed += OnClipboardHistoryChanged;
+            _codeTimer.Changed += OnCodeTimerChanged;
+            ApplyClipboardWatcher();
+
             // ---- Siri 组件：可插拔、可单独禁用。禁用时不装玻璃、不开麦 ----
             _siriConfig = SiriConfig.Load();
             if (_siriConfig.Enabled)
@@ -270,9 +304,24 @@ namespace Pynelith.Island.Views
             };
             _clockTimer.Tick += (_, _) => Guarded(() =>
             {
+                // 电量 / 网速与 CPU 采样同一节拍，取数都在服务内部完成，UI 线程只读缓存
+                if (_metricsRunning)
+                {
+                    _status.Sample();
+                }
+
+                // 监控类插件按各自声明的间隔在后台轮询，这里只负责节拍
+                _plugins.PollMonitors();
+
                 UpdateTexts();
                 // 兜底：即使歌词定时器因极端负载被推迟，也保证每秒至少对齐一次
                 SyncLyricPosition();
+
+                // 计时器显示复用 1 秒节拍，不额外开定时器
+                if (_toolsOpen && _codeTimer.IsRunning)
+                {
+                    RefreshCodeTimerText();
+                }
             });
 
             _lyricTimer = new DispatcherTimer(DispatcherPriority.Normal)
@@ -334,7 +383,7 @@ namespace Pynelith.Island.Views
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             ApplyWindowSize();
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
             UpdateTexts();
             Reposition();
             _dockGuardActive = true;
@@ -343,7 +392,12 @@ namespace Pynelith.Island.Views
             _glass?.SetFrameRate(10);
 
             _clockTimer.Start();
-            _lyricTimer.Start();
+            // 歌词 / 进度心跳只在有媒体会话时运行：没有音乐时省掉 20ms 定时器
+            if (_media.HasSession)
+            {
+                _lyricTimer.Start();
+            }
+
             _topmostTimer.Start();
 
             _metricsRunning = Config.ShowSystemMetrics;
@@ -351,6 +405,10 @@ namespace Pynelith.Island.Views
             {
                 _metrics.Start();
             }
+
+            // 启动即加载插件：每个插件独立 ALC，失败只标记该插件，不影响岛本体
+            _plugins.LoadAll();
+            UpdateMetricsText();
 
             // 启动即同步一次媒体状态（会话服务可能已先就绪）
             OnMediaStateChanged(this, EventArgs.Empty);
@@ -363,6 +421,10 @@ namespace Pynelith.Island.Views
 
             // 锁屏解锁同样播放一次（Win+L 之后回到桌面）
             SystemEvents.SessionSwitch += OnSessionSwitch;
+
+            // 全屏应用监听：事件驱动，只有前台窗口变化时才判断一次
+            _fullscreen.Changed += OnFullscreenChanged;
+            _fullscreen.Start();
         }
 
         /// <summary>锁屏 / 解锁切换：只有解锁回来时才播放入场。</summary>
@@ -371,6 +433,94 @@ namespace Pynelith.Island.Views
             if (e.Reason == SessionSwitchReason.SessionUnlock)
             {
                 PlayIntro();
+            }
+        }
+
+        /// <summary>前台全屏状态变化：按配置隐藏 / 恢复。</summary>
+        private void OnFullscreenChanged(object? sender, bool fullscreen) => ApplyFullscreenState(fullscreen);
+
+        /// <summary>
+        /// 全屏应用在前台时把岛彻底藏起来：停掉所有刷新定时器、抓屏采样降到 1fps，
+        /// 避免游戏时抢 GPU、引发掉帧与发热。
+        /// </summary>
+        private void ApplyFullscreenState(bool fullscreen)
+        {
+            if (fullscreen && Config.HideInFullscreen)
+            {
+                SuspendForFullscreen();
+            }
+            else
+            {
+                ResumeFromFullscreen();
+            }
+        }
+
+        private void SuspendForFullscreen()
+        {
+            if (_hiddenByFullscreen || !IsLoaded)
+            {
+                return;
+            }
+
+            _hiddenByFullscreen = true;
+
+            StopSpring();
+            _clockTimer.Stop();
+            _lyricTimer.Stop();
+            _topmostTimer.Stop();
+
+            // 窗口已不可见，采样降到 1fps 即可，恢复时再提回 10fps
+            _glass?.SetFrameRate(1);
+
+            if (_metricsRunning)
+            {
+                _metrics.Stop();
+            }
+
+            // 通知轮询也是持续的系统调用，全屏游戏时一并暂停
+            _bridge?.Stop();
+
+            Hide();
+        }
+
+        private void ResumeFromFullscreen()
+        {
+            if (!_hiddenByFullscreen)
+            {
+                return;
+            }
+
+            _hiddenByFullscreen = false;
+
+            Show();
+            Reposition();
+            ReassertTopmost();
+            ApplyMorph(_morphSpring.Value);
+
+            _glass?.SetFrameRate(10);
+            _clockTimer.Start();
+            _topmostTimer.Start();
+
+            _metricsRunning = Config.ShowSystemMetrics;
+            if (_metricsRunning)
+            {
+                _metrics.Start();
+            }
+
+            if (_media.HasSession)
+            {
+                _lyricTimer.Start();
+            }
+
+            if (_bridgeAuthorized)
+            {
+                _bridge?.Start();
+            }
+
+            // 用户自己用快捷键藏起来的，退出全屏后也别硬拉回来
+            if (_hiddenByUser)
+            {
+                Hide();
             }
         }
 
@@ -462,7 +612,7 @@ namespace Pynelith.Island.Views
             _introSizeTarget = true;
             EnsureSpring();
 
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
 
             var drop = new DoubleAnimation
             {
@@ -578,7 +728,7 @@ namespace Pynelith.Island.Views
             }
 
             _introActive = false;
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
         }
 
         #endregion
@@ -599,8 +749,76 @@ namespace Pynelith.Island.Views
                 _hwnd = src.Handle;
                 src.AddHook(DockGuardWndProc);
                 AttachSiriHotkey(src);
+                AttachVisibilityHotkey(src);
             }
         }
+
+        #region 显示 / 隐藏快捷键
+
+        /// <summary>把「显示 / 隐藏灵动岛」热键挂到窗口消息循环上。</summary>
+        private void AttachVisibilityHotkey(HwndSource source)
+        {
+            _visibilityHotkeySource = source;
+            source.AddHook(VisibilityHotkeyWndProc);
+            ApplyVisibilityHotkey();
+        }
+
+        /// <summary>按配置注册 / 注销快捷键（设置页改动后立即生效）。</summary>
+        private void ApplyVisibilityHotkey()
+        {
+            if (_hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+
+            HotkeyNative.Unregister(_hwnd, HotkeyNative.VisibilityHotkeyId);
+
+            if (!Config.VisibilityHotkeyEnabled)
+            {
+                return;
+            }
+
+            HotkeySpec? spec = HotkeyParser.Parse(Config.VisibilityHotkey);
+            if (spec.HasValue)
+            {
+                HotkeyNative.Register(_hwnd, spec.Value, HotkeyNative.VisibilityHotkeyId);
+            }
+        }
+
+        private IntPtr VisibilityHotkeyWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == HotkeyNative.WM_HOTKEY && wParam.ToInt32() == HotkeyNative.VisibilityHotkeyId)
+            {
+                handled = true;
+                ToggleVisibility();
+            }
+
+            return IntPtr.Zero;
+        }
+
+        /// <summary>快捷键切换显示 / 隐藏：恢复时重新停靠并抢回置顶。</summary>
+        private void ToggleVisibility()
+        {
+            if (_hiddenByFullscreen)
+            {
+                return;
+            }
+
+            if (IsVisible)
+            {
+                _hiddenByUser = true;
+                Hide();
+                return;
+            }
+
+            _hiddenByUser = false;
+            Show();
+            Reposition();
+            ReassertTopmost();
+            ApplyMorph(_morphSpring.Value);
+        }
+
+        #endregion
 
         /// <summary>
         /// 逐屏 DPI 变化：岛被拖到缩放不同的屏上时，WPF 会发 WM_DPICHANGED。
@@ -715,7 +933,7 @@ namespace Pynelith.Island.Views
             ApplyMetricsTimer();
 
             ApplyWindowSize();
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
             UpdateTexts();
             Reposition();
             // 只有歌词开关/歌词源变化才重新匹配；单纯调偏移不应触发重新查询
@@ -754,6 +972,20 @@ namespace Pynelith.Island.Views
             {
                 _followSystemThemeApplied = Config.FollowSystemTheme;
                 ApplyFollowSystemTheme();
+            }
+
+            // 全屏隐藏开关变化立即生效（关掉时若正被隐藏会立刻恢复）
+            ApplyFullscreenState(_fullscreen.IsFullscreen);
+
+            // 显示 / 隐藏快捷键改动后立即重新注册
+            ApplyVisibilityHotkey();
+
+            // 工具面板：条数上限即时生效，剪贴板监听按开关启停
+            _clipboard.Limit = Config.ClipboardHistoryLimit;
+            ApplyClipboardWatcher();
+            if (_toolsOpen)
+            {
+                RefreshToolsPanel();
             }
         }
 
@@ -872,7 +1104,7 @@ namespace Pynelith.Island.Views
             _lastGlassSplit = -1;
             _glassDirty = true;
             _glassFrameSkip = 0;
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
         }
 
         /// <summary>
@@ -1052,6 +1284,41 @@ namespace Pynelith.Island.Views
 
         private void OnMetricsUpdated(object? sender, EventArgs e) => UpdateMetricsText();
 
+        /// <summary>插件指标更新：回到 UI 线程刷新状态行。</summary>
+        private void OnPluginMetricsUpdated(object? sender, PluginMetricsEventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnPluginMetricsUpdated(sender, e)));
+                return;
+            }
+
+            UpdateMetricsText();
+        }
+
+        /// <summary>插件推送通知：转成岛内消息面板的一条消息。</summary>
+        private void OnPluginNotification(object? sender, PluginNotificationEventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnPluginNotification(sender, e)));
+                return;
+            }
+
+            string appName = string.IsNullOrWhiteSpace(e.Notification.AppName)
+                ? e.Plugin.Manifest.Name
+                : e.Notification.AppName;
+
+            EnqueueMessage(new NotificationItem
+            {
+                AppName = appName,
+                AppKey = "plugin:" + e.Plugin.Manifest.Id,
+                Title = e.Notification.Title,
+                Body = e.Notification.Body,
+                Accent = AccentPink,
+            });
+        }
+
         /**
          * 监控文本固定宽度（等宽字体），数值变化不会改变胶囊宽度；
          * 任一指标超过 85% 时转为警示色，便于一眼看出高负载。
@@ -1062,6 +1329,7 @@ namespace Pynelith.Island.Views
             {
                 IdleMetrics.Text = string.Empty;
                 IdleDetailMetrics.Text = string.Empty;
+                IdleDetailStatus.Text = string.Empty;
                 return;
             }
 
@@ -1069,18 +1337,21 @@ namespace Pynelith.Island.Views
             {
                 IdleMetrics.Text = "CPU --%  RAM --%";
                 IdleDetailMetrics.Text = "CPU --% · RAM --%";
-                return;
+            }
+            else
+            {
+                IdleMetrics.Text = string.Format(
+                    "CPU {0,3:0}%  RAM {1,2:0}%",
+                    _metrics.CpuPercent,
+                    _metrics.MemoryPercent);
+
+                IdleDetailMetrics.Text = string.Format(
+                    "CPU {0:0}% · RAM {1:0.0}%",
+                    _metrics.CpuPercent,
+                    _metrics.MemoryPercent);
             }
 
-            IdleMetrics.Text = string.Format(
-                "CPU {0,3:0}%  RAM {1,2:0}%",
-                _metrics.CpuPercent,
-                _metrics.MemoryPercent);
-
-            IdleDetailMetrics.Text = string.Format(
-                "CPU {0:0}% · RAM {1:0.0}%",
-                _metrics.CpuPercent,
-                _metrics.MemoryPercent);
+            IdleDetailStatus.Text = BuildStatusLine();
 
             double peak = Math.Max(_metrics.CpuPercent, _metrics.MemoryPercent);
             Brush brush = peak >= 85
@@ -1091,12 +1362,55 @@ namespace Pynelith.Island.Views
             IdleDetailMetrics.Foreground = brush;
         }
 
+        /// <summary>详情态第二行：电量 / 亮度 / 实时网速（取不到的项自动省略）。</summary>
+        private string BuildStatusLine()
+        {
+            var parts = new List<string>(4);
+
+            if (_status.BatteryPercent >= 0)
+            {
+                parts.Add(string.Format("电量 {0}%", _status.BatteryPercent));
+            }
+
+            if (_status.BrightnessPercent >= 0)
+            {
+                parts.Add(string.Format("亮度 {0}%", _status.BrightnessPercent));
+            }
+
+            parts.Add(string.Format("↓{0} ↑{1}",
+                FormatRate(_status.DownloadKbps),
+                FormatRate(_status.UploadKbps)));
+
+            // 插件指标（天气、倒计时等）追加在最后
+            string pluginSummary = _plugins.MetricSummary;
+            if (!string.IsNullOrEmpty(pluginSummary))
+            {
+                parts.Add(pluginSummary);
+            }
+
+            return string.Join(" · ", parts);
+        }
+
+        /// <summary>把 KB/s 格式化成紧凑的速率文本。</summary>
+        private static string FormatRate(double kbps)
+        {
+            if (kbps < 0)
+            {
+                return "--";
+            }
+
+            return kbps < 1024
+                ? string.Format("{0:0}K/s", kbps)
+                : string.Format("{0:0.0}M/s", kbps / 1024.0);
+        }
+
         #endregion
 
         #region 系统通知接管
 
         private SystemNotificationBridge? _bridge;
         private bool _takeoverActive;
+        private bool _bridgeAuthorized;
 
         /// <summary>按配置创建/重建通知桥；不可用时回退模拟通知。</summary>
         private void SetupBridge()
@@ -1105,6 +1419,7 @@ namespace Pynelith.Island.Views
 
             _bridge?.Dispose();
             _bridge = null;
+            _bridgeAuthorized = false;
 
             // 是否"接管"只决定要不要撤下系统原生 Toast；
             // 消息本身始终监听，用于自动展开岛内展示。
@@ -1129,7 +1444,13 @@ namespace Pynelith.Island.Views
 
             if (allowed)
             {
-                bridge.Start();
+                _bridgeAuthorized = true;
+
+                // 全屏降载期间不轮询，退出全屏时 Resume 再启动
+                if (!_hiddenByFullscreen)
+                {
+                    bridge.Start();
+                }
             }
             // 未授权时保持安静：不再生成模拟消息，设置页里有授权引导链接。
         }
@@ -1236,10 +1557,9 @@ namespace Pynelith.Island.Views
 
             if (EffectiveAnimationMs <= 0)
             {
-                _n = expanded ? 1 : 0;
-                _nv = 0;
+                _messageSpring.SnapTo(expanded ? 1 : 0);
                 StopSpring();
-                ApplyMorph(_p);
+                ApplyMorph(_morphSpring.Value);
 
                 if (!expanded)
                 {
@@ -1257,15 +1577,14 @@ namespace Pynelith.Island.Views
         {
             _messageShowing = false;
             _detail = false;
-            _d = 0;
-            _dv = 0;
+            _detailSpring.SnapTo(0);
 
             MessageApp.Text = string.Empty;
             MessageBody.Text = string.Empty;
             _currentNotification = null;
 
             ApplyWindowSize();
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
 
             if (!_dragging)
             {
@@ -1377,8 +1696,10 @@ namespace Pynelith.Island.Views
                 windowHeight = Math.Max(windowHeight, _notifHeight);
             }
 
-            Width = windowWidth;
-            Height = windowHeight;
+            // 预留回弹余量：弹簧过冲时胶囊不会撞上窗口边界被裁掉。
+            // 窗口本身是透明的，多出的 5% 只扩大一圈不可见区域，不影响观感。
+            Width = windowWidth * BounceHeadroom;
+            Height = windowHeight * BounceHeadroom;
 
             ContentScale.ScaleX = scale;
             ContentScale.ScaleY = scale;
@@ -1441,18 +1762,22 @@ namespace Pynelith.Island.Views
         {
             if (double.IsNaN(p) || double.IsInfinity(p))
             {
-                p = _target;
-                _v = 0;
+                p = _morphSpring.Target;
+                _morphSpring.Velocity = 0;
             }
 
-            if (double.IsNaN(_d) || double.IsInfinity(_d))
+            double detailValue = _detailSpring.Value;
+            if (double.IsNaN(detailValue) || double.IsInfinity(detailValue))
             {
-                _d = _detail ? 1 : 0;
-                _dv = 0;
+                detailValue = _detail ? 1 : 0;
+                _detailSpring.Velocity = 0;
             }
 
+            // 形态进度不允许过冲（宽度突跳会撞窗口边界）；展开类通道允许轻微过冲，
+            // 由窗口预留的 BounceHeadroom 兜住，形成 Apple 式的弹性收尾。
             double pc = Math.Clamp(p, 0, 1);
-            double d = Math.Clamp(_d, 0, 1);
+            double d = Math.Clamp(detailValue, 0, 1.06);
+            double d01 = Math.Clamp(detailValue, 0, 1);
 
             // 展开在两种形态下都有效：待机展开（大时钟）与媒体展开（曲目详情）
             double mediaDetail = d * pc;
@@ -1471,7 +1796,7 @@ namespace Pynelith.Island.Views
                 + (m.DetailH - m.IdleH) * mediaDetail;
 
             // 消息层：独立弹簧把胶囊从当前形态平滑拉到消息面板尺寸（再平滑收回）
-            double n = Math.Clamp(_n, 0, 1);
+            double n = Math.Clamp(_messageSpring.Value, 0, 1.06);
             if (n > 0.0001)
             {
                 width += (_notifWidth - width) * n;
@@ -1480,7 +1805,7 @@ namespace Pynelith.Island.Views
 
             // 欢迎动画：独立弹簧把胶囊撑到能容纳 hello 的尺寸，播完再收回原形。
             // 用户可能把胶囊配置得很小，不撑开就会把 hello 裁掉。
-            double intro = Math.Clamp(_i, 0, 1);
+            double intro = Math.Clamp(_introSpring.Value, 0, 1.06);
             if (intro > 0.0001)
             {
                 double introWidth = 86 * scale;
@@ -1490,7 +1815,7 @@ namespace Pynelith.Island.Views
             }
 
             // Siri 透镜：独立弹簧把胶囊拉到透镜尺寸（透镜是正圆 + 下方文字）
-            double siri = Math.Clamp(_s, 0, 1);
+            double siri = Math.Clamp(_siriSpring.Value, 0, 1.06);
             double siriAlpha = Math.Clamp(siri * 1.2, 0, 1);
             if (siri > 0.0001)
             {
@@ -1534,8 +1859,8 @@ namespace Pynelith.Island.Views
             // 也必须一起淡出，否则透明区会残留一层灰雾和一圈亮边。
             // Siri 透镜接管时还要整块淡出，否则胶囊本体会露出一个方形底框。
             double shellFade = (1.0 - Math.Clamp(mediaDetail, 0, 1)) * (1 - siriAlpha);
-            CapsuleSheen.Opacity = (0.45 + 0.55 * Math.Clamp(_d, 0, 1)) * shellFade;
-            CapsuleHighlight.Opacity = (0.5 + 0.5 * Math.Clamp(_d, 0, 1)) * shellFade;
+            CapsuleSheen.Opacity = (0.45 + 0.55 * d01) * shellFade;
+            CapsuleHighlight.Opacity = (0.5 + 0.5 * d01) * shellFade;
             ThemeBackdrop.Opacity = 1 - siriAlpha;
             if (_glass != null)
             {
@@ -1635,8 +1960,9 @@ namespace Pynelith.Island.Views
             double bezel = Math.Min(22 * Config.GlobalScale, shortSide * 0.26);
 
             // 仅媒体展开态启用「上半黑玻璃 / 下半全透明」分区，随展开进度淡入。
-            // 空闲展开（大时钟）与紧凑态的 _p 为 0，保持原样。
-            double split = Math.Clamp(_d, 0, 1) * Math.Clamp(_p, 0, 1);
+            // 空闲展开（大时钟）与紧凑态的形态进度为 0，保持原样。
+            double split = Math.Clamp(_detailSpring.Value, 0, 1)
+                * Math.Clamp(_morphSpring.Value, 0, 1);
 
             if (!force
                 && Math.Abs(width - _lastGlassWidth) < 2.5
@@ -1672,16 +1998,15 @@ namespace Pynelith.Island.Views
         /// </summary>
         private void AnimateMorphTo(double target)
         {
-            _target = Math.Clamp(target, 0, 1);
+            _morphSpring.SetTarget(Math.Clamp(target, 0, 1));
 
-            if (EffectiveAnimationMs <= 0 || Math.Abs(_p - _target) < 0.0005)
+            if (EffectiveAnimationMs <= 0
+                || Math.Abs(_morphSpring.Value - _morphSpring.Target) < 0.0005)
             {
-                _p = _target;
-                _v = 0;
-                _d = _detail ? 1 : 0;
-                _dv = 0;
+                _morphSpring.SnapTo(_morphSpring.Target);
+                _detailSpring.SnapTo(_detail ? 1 : 0);
                 StopSpring();
-                ApplyMorph(_p);
+                ApplyMorph(_morphSpring.Value);
                 return;
             }
 
@@ -1708,9 +2033,8 @@ namespace Pynelith.Island.Views
 
             if (EffectiveAnimationMs <= 0)
             {
-                _d = detail ? 1 : 0;
-                _dv = 0;
-                ApplyMorph(_p);
+                _detailSpring.SnapTo(detail ? 1 : 0);
+                ApplyMorph(_morphSpring.Value);
                 return;
             }
 
@@ -1721,13 +2045,18 @@ namespace Pynelith.Island.Views
         {
             _lastFrameTicks = Stopwatch.GetTimestamp();
             _springStartTicks = _lastFrameTicks;
+
+            // 动画帧率由设置决定（60 / 30），低配机降帧可显著减少 CPU 与抓屏开销
+            int fps = Math.Max(15, Config.AnimationFps);
+            _springTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
+
             if (!_springRunning)
             {
                 _springRunning = true;
                 _springTimer.Start();
 
                 // 形变期间提高玻璃采样帧率，静止时由 StopSpring 降回去
-                _glass?.SetFrameRate(24);
+                _glass?.SetFrameRate(Math.Min(24, fps));
             }
         }
 
@@ -1761,70 +2090,39 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            // 响应时长由配置动画时长决定；阻尼比固定，保证手感一致
+            // 响应时长由配置动画时长决定；阻尼比按通道区分，保证层级手感一致
             double response = Math.Max(MinResponse, EffectiveAnimationMs / 1000.0 * 0.5);
-            double omega = 2 * Math.PI / response;
-            double k = omega * omega;
-            double c = 2 * SpringZeta * omega;
+            _morphSpring.Configure(response, SpringZeta);
+            _detailSpring.Configure(response, DetailZeta);
+            _messageSpring.Configure(response, MessageZeta);
+            _introSpring.Configure(response, SpringZeta);
+            _siriSpring.Configure(response, SiriZeta);
 
-            // 固定子步长积分：帧长可能达到 50ms（玻璃抓屏较重），
+            _detailSpring.SetTarget(_detail ? 1 : 0);
+            _messageSpring.SetTarget(_messageTargetOn ? 1 : 0);
+            _introSpring.SetTarget(_introSizeTarget ? 1 : 0);
+            _siriSpring.SetTarget(_siriTarget ? 1 : 0);
+
+            // 每条通道内部按 ≤8ms 子步积分：帧长可能达到 50ms（玻璃抓屏较重），
             // 单步欧拉在 ω·dt 接近 2 时会振荡甚至发散，表现为抖动且永不收敛。
-            // 拆成 ≤8ms 的子步后，任何帧率下轨迹一致且必然收敛。
-            const double maxSubStep = 0.008;
-            int steps = Math.Min(8, Math.Max(1, (int)Math.Ceiling(dt / maxSubStep)));
-            double h = dt / steps;
-
-            double detailTarget = _detail ? 1 : 0;
-            double messageTarget = _messageTargetOn ? 1 : 0;
-            double introTarget = _introSizeTarget ? 1 : 0;
-            double siriTarget = _siriTarget ? 1 : 0;
-
-            for (int i = 0; i < steps; i++)
-            {
-                double accel = -k * (_p - _target) - c * _v;
-                _v += accel * h;
-                _p += _v * h;
-
-                double dAccel = -k * (_d - detailTarget) - c * _dv;
-                _dv += dAccel * h;
-                _d += _dv * h;
-
-                double nAccel = -k * (_n - messageTarget) - c * _nv;
-                _nv += nAccel * h;
-                _n += _nv * h;
-
-                double iAccel = -k * (_i - introTarget) - c * _iv;
-                _iv += iAccel * h;
-                _i += _iv * h;
-
-                double sAccel = -k * (_s - siriTarget) - c * _sv;
-                _sv += sAccel * h;
-                _s += _sv * h;
-            }
-
-            bool mainSettled = Math.Abs(_p - _target) < 0.0015 && Math.Abs(_v) < 0.0015;
-            bool detailSettled = Math.Abs(_d - detailTarget) < 0.0015 && Math.Abs(_dv) < 0.0015;
-            bool messageSettled = Math.Abs(_n - messageTarget) < 0.0015 && Math.Abs(_nv) < 0.0015;
-            bool introSettled = Math.Abs(_i - introTarget) < 0.0015 && Math.Abs(_iv) < 0.0015;
-            bool siriSettled = Math.Abs(_s - siriTarget) < 0.0015 && Math.Abs(_sv) < 0.0015;
+            bool settled = _morphSpring.Advance(dt);
+            settled &= _detailSpring.Advance(dt);
+            settled &= _messageSpring.Advance(dt);
+            settled &= _introSpring.Advance(dt);
+            settled &= _siriSpring.Advance(dt);
 
             // 超时兜底：极端负载下也不允许动画无限挂起，否则 Rendering 会持续占满 UI 线程
             bool timedOut = Stopwatch.GetElapsedTime(_springStartTicks) > TimeSpan.FromSeconds(2);
 
-            if (mainSettled && detailSettled && messageSettled && introSettled && siriSettled || timedOut)
+            if (settled || timedOut)
             {
-                _p = _target;
-                _v = 0;
-                _d = detailTarget;
-                _dv = 0;
-                _n = messageTarget;
-                _nv = 0;
-                _i = introTarget;
-                _iv = 0;
-                _s = siriTarget;
-                _sv = 0;
+                _morphSpring.SnapTo(_morphSpring.Target);
+                _detailSpring.SnapTo(_detailSpring.Target);
+                _messageSpring.SnapTo(_messageSpring.Target);
+                _introSpring.SnapTo(_introSpring.Target);
+                _siriSpring.SnapTo(_siriSpring.Target);
                 StopSpring();
-                ApplyMorph(_p);
+                ApplyMorph(_morphSpring.Value);
 
                 // 只有确实处于消息展示状态时才做收尾；否则每次点击展开动画结算
                 // 都会被误判成"消息收起"，把 _detail 重置、胶囊瞬间缩回去。
@@ -1836,7 +2134,7 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
         }
 
         /// <summary>空闲/媒体形态切换（由媒体会话状态自动驱动）；离开媒体态时收起详情。</summary>
@@ -1899,7 +2197,8 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            _settingsWindow = new SettingsWindow(_service, _lyrics, _media, _history, _siriConfig, _siri);
+            _settingsWindow = new SettingsWindow(
+                _service, _lyrics, _media, _history, _siriConfig, _plugins, _pluginCatalog, _siri);
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
             _settingsWindow.Show();
         }
@@ -1914,6 +2213,162 @@ namespace Pynelith.Island.Views
 
         /// <summary>托盘入口：退出程序。</summary>
         internal void ExitFromTray() => Application.Current.Shutdown();
+
+        #endregion
+
+        #region 工具面板（代码计时器 + 剪贴板历史）
+
+        /// <summary>右键菜单：打开工具面板（定位在胶囊正下方）。</summary>
+        private void OnOpenToolsPanel(object sender, RoutedEventArgs e)
+        {
+            ToolsPopup.IsOpen = true;
+            ToolsPopup.Focus();
+        }
+
+        private void OnToolsPopupOpened(object? sender, EventArgs e)
+        {
+            _toolsOpen = true;
+            RefreshToolsPanel();
+        }
+
+        private void OnToolsPopupClosed(object? sender, EventArgs e)
+        {
+            _toolsOpen = false;
+        }
+
+        /// <summary>按配置决定两个区块的可见性，并刷新内容。</summary>
+        private void RefreshToolsPanel()
+        {
+            bool showTimer = Config.ShowCodeTimer;
+            bool showClipboard = Config.ShowClipboardHistory;
+
+            ToolsTimerSection.Visibility = showTimer ? Visibility.Visible : Visibility.Collapsed;
+            ToolsClipboardSection.Visibility = showClipboard ? Visibility.Visible : Visibility.Collapsed;
+            ToolsDivider.Visibility = showTimer && showClipboard ? Visibility.Visible : Visibility.Collapsed;
+            ToolsDisabledHint.Visibility = showTimer || showClipboard ? Visibility.Collapsed : Visibility.Visible;
+
+            if (showTimer)
+            {
+                RefreshCodeTimerText();
+            }
+
+            if (showClipboard)
+            {
+                RebuildClipboardList();
+            }
+        }
+
+        private void RefreshCodeTimerText()
+        {
+            CodeTimerText.Text = _codeTimer.DisplayText;
+            CodeTimerToggle.Content = _codeTimer.IsRunning ? "暂停" : "开始";
+        }
+
+        private void OnCodeTimerToggle(object sender, RoutedEventArgs e)
+        {
+            _codeTimer.Toggle();
+            RefreshCodeTimerText();
+        }
+
+        private void OnCodeTimerReset(object sender, RoutedEventArgs e)
+        {
+            _codeTimer.Reset();
+            RefreshCodeTimerText();
+        }
+
+        private void OnCodeTimerChanged(object? sender, EventArgs e) => RefreshCodeTimerText();
+
+        /// <summary>按配置启停剪贴板监听（关闭后不创建 message-only 窗口，零开销）。</summary>
+        private void ApplyClipboardWatcher()
+        {
+            bool wanted = Config.ShowClipboardHistory;
+
+            if (wanted && _clipboardWatcher == null)
+            {
+                _clipboardWatcher = new ClipboardWatcher();
+                _clipboardWatcher.TextCaptured += OnClipboardTextCaptured;
+            }
+            else if (!wanted && _clipboardWatcher != null)
+            {
+                _clipboardWatcher.TextCaptured -= OnClipboardTextCaptured;
+                _clipboardWatcher.Dispose();
+                _clipboardWatcher = null;
+            }
+        }
+
+        private void OnClipboardTextCaptured(object? sender, string text) => _clipboard.Add(text);
+
+        private void OnClipboardHistoryChanged(object? sender, EventArgs e)
+        {
+            if (_toolsOpen && Config.ShowClipboardHistory)
+            {
+                RebuildClipboardList();
+            }
+        }
+
+        private void OnClearClipboardHistory(object sender, RoutedEventArgs e) => _clipboard.Clear();
+
+        /// <summary>重建剪贴板列表：只显示最近 8 条，点击写回剪贴板。</summary>
+        private void RebuildClipboardList()
+        {
+            ClipboardList.Children.Clear();
+
+            IReadOnlyList<ClipboardEntry> items = _clipboard.Items;
+            int count = Math.Min(items.Count, 8);
+
+            ClipboardEmpty.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ClipboardScroll.Visibility = count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            ClipboardClearButton.IsEnabled = count > 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                ClipboardList.Children.Add(BuildClipboardRow(items[i]));
+            }
+        }
+
+        private Border BuildClipboardRow(ClipboardEntry entry)
+        {
+            var label = new TextBlock
+            {
+                Text = entry.Preview,
+                FontSize = 12,
+                Foreground = (Brush)FindResource("TextSecondary"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 268,
+            };
+
+            var row = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 0, 0, 4),
+                Background = Brushes.Transparent,
+                Cursor = Cursors.Hand,
+                Child = label,
+            };
+
+            row.MouseEnter += (_, _) => row.Background = ToolsRowHoverBrush;
+            row.MouseLeave += (_, _) => row.Background = Brushes.Transparent;
+            row.MouseLeftButtonUp += (_, _) => CopyClipboardEntry(entry.Text);
+            return row;
+        }
+
+        /// <summary>把历史条目写回系统剪贴板，并把它移到列表最前。</summary>
+        private void CopyClipboardEntry(string text)
+        {
+            try
+            {
+                Clipboard.SetText(text);
+            }
+            catch (Exception)
+            {
+                // 剪贴板被其它进程占用：静默失败，不改动列表
+                return;
+            }
+
+            _clipboard.Add(text);
+            ToolsPopup.IsOpen = false;
+        }
 
         #endregion
 
@@ -1955,6 +2410,17 @@ namespace Pynelith.Island.Views
             }
 
             bool media = _media.HasSession && !string.IsNullOrWhiteSpace(_media.Title);
+
+            // 心跳定时器按需启停：无媒体时完全不跑，有会话时恢复
+            if (!media)
+            {
+                _lyricTimer.Stop();
+            }
+            else if (!_lyricTimer.IsEnabled && !_hiddenByFullscreen)
+            {
+                _lyricTimer.Start();
+            }
+
             SetMediaMode(media);
         }
 
@@ -2638,6 +3104,65 @@ namespace Pynelith.Island.Views
             Config.ScreenOffsetY = Math.Round(Top);
         }
 
+        /// <summary>悬停 260ms 自动展开详情（可在设置里关闭）。</summary>
+        private void OnIslandMouseEnter(object sender, MouseEventArgs e)
+        {
+            _hoverCollapseTimer?.Stop();
+
+            if (!Config.HoverExpand || _detail || _dragging || _messageShowing || _siriTarget || !IsVisible)
+            {
+                return;
+            }
+
+            _hoverExpandTimer ??= CreateHoverTimer(() =>
+            {
+                if (!_detail && Config.HoverExpand && CapsuleHost.IsMouseOver)
+                {
+                    SetDetail(true);
+                }
+            }, 260);
+
+            _hoverExpandTimer.Stop();
+            _hoverExpandTimer.Start();
+        }
+
+        /// <summary>指针离开后 650ms 自动收起；拖拽 / 右键菜单打开时保持展开。</summary>
+        private void OnIslandMouseLeave(object sender, MouseEventArgs e)
+        {
+            _hoverExpandTimer?.Stop();
+
+            if (!_detail || _dragging || _messageShowing || _siriTarget)
+            {
+                return;
+            }
+
+            _hoverCollapseTimer ??= CreateHoverTimer(() =>
+            {
+                if (_detail && !CapsuleHost.IsMouseOver && !_dragging
+                    && CapsuleHost.ContextMenu?.IsOpen != true)
+                {
+                    SetDetail(false);
+                }
+            }, 650);
+
+            _hoverCollapseTimer.Stop();
+            _hoverCollapseTimer.Start();
+        }
+
+        private static DispatcherTimer CreateHoverTimer(Action action, int delayMs)
+        {
+            var timer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                Interval = TimeSpan.FromMilliseconds(delayMs),
+            };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                Guarded(action);
+            };
+            return timer;
+        }
+
         private void OnIslandMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (IsInteractive(e.OriginalSource as DependencyObject))
@@ -2818,7 +3343,7 @@ namespace Pynelith.Island.Views
             }
 
             ApplyWindowSize();
-            ApplyMorph(_p);
+            ApplyMorph(_morphSpring.Value);
 
             if (!_dragging)
             {
@@ -2831,6 +3356,16 @@ namespace Pynelith.Island.Views
         protected override void OnClosed(EventArgs e)
         {
             StopSpring();
+
+            // 悬停 / 设置窗口都要显式收尾：否则退出后定时器仍可能回调已关闭的窗口，
+            // 在后台抛出异常，留下"退出时闪一下错误"的体感。
+            _hoverExpandTimer?.Stop();
+            _hoverCollapseTimer?.Stop();
+            _hoverExpandTimer = null;
+            _hoverCollapseTimer = null;
+            _settingsWindow?.Close();
+            _settingsWindow = null;
+
             _clockTimer.Stop();
             _lyricTimer.Stop();
             _topmostTimer.Stop();
@@ -2842,9 +3377,38 @@ namespace Pynelith.Island.Views
             _lyricLookupCts?.Cancel();
             SystemEvents.SessionSwitch -= OnSessionSwitch;
 
+            _fullscreen.Changed -= OnFullscreenChanged;
+            _fullscreen.Dispose();
+
+            // 释放全局热键与窗口消息钩子，避免句柄泄漏
+            HotkeyNative.Unregister(_hwnd, HotkeyNative.VisibilityHotkeyId);
+            if (_visibilityHotkeySource != null)
+            {
+                _visibilityHotkeySource.RemoveHook(VisibilityHotkeyWndProc);
+                _visibilityHotkeySource = null;
+            }
+
+            _status.Dispose();
+
             _feed.Dispose();
             _bridge?.Dispose();
             _history.Dispose();
+
+            // 插件：先解绑事件再卸载，避免卸载过程中的回调打到已关闭的窗口
+            _plugins.NotificationReceived -= OnPluginNotification;
+            _plugins.MetricsUpdated -= OnPluginMetricsUpdated;
+            _plugins.Dispose();
+
+            // 工具面板：剪贴板监听窗口必须显式销毁，否则掉一个消息窗口句柄
+            ToolsPopup.IsOpen = false;
+            _clipboard.Changed -= OnClipboardHistoryChanged;
+            _codeTimer.Changed -= OnCodeTimerChanged;
+            if (_clipboardWatcher != null)
+            {
+                _clipboardWatcher.TextCaptured -= OnClipboardTextCaptured;
+                _clipboardWatcher.Dispose();
+                _clipboardWatcher = null;
+            }
 
             if (_systemTheme != null)
             {

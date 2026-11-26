@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Pynelith.Plugin.JianyingShortcut</AssemblyName>
+    <RootNamespace>Pynelith.Plugin.JianyingShortcut</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Description>剪映快捷指令插件（通知源，骨架）：检测剪映安装与运行状态并通过岛推送提示</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Pynelith.Plugins.Abstractions\Pynelith.Plugins.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyPluginToIsland" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginTargetDir>$(MSBuildThisFileDirectory)..\..\src\Pynelith.Island\Plugins\$(AssemblyName)</PluginTargetDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <PluginPayload Include="$(TargetDir)$(AssemblyName).dll" />
+      <PluginPayload Include="$(MSBuildThisFileDirectory)plugin.json" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginTargetDir)" />
+    <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginTargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

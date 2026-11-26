@@ -28,3 +28,6 @@ jobs:
 
       - name: Build solution
         run: dotnet build Pynelith.sln -c Release
+
+      - name: Test
+        run: dotnet test tests/Pynelith.Tests/Pynelith.Tests.csproj -c Release --no-build

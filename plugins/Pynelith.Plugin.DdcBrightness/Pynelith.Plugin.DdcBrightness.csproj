@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Pynelith.Plugin.DdcBrightness</AssemblyName>
+    <RootNamespace>Pynelith.Plugin.DdcBrightness</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Description>DDC/CI 显示器亮度插件（监控源，骨架）：读取主显示器亮度并预留设置接口</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Pynelith.Plugins.Abstractions\Pynelith.Plugins.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyPluginToIsland" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginTargetDir>$(MSBuildThisFileDirectory)..\..\src\Pynelith.Island\Plugins\$(AssemblyName)</PluginTargetDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <PluginPayload Include="$(TargetDir)$(AssemblyName).dll" />
+      <PluginPayload Include="$(MSBuildThisFileDirectory)plugin.json" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginTargetDir)" />
+    <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginTargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

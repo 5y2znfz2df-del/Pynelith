@@ -181,6 +181,60 @@
             </Setter>
         </Style>
 
+        <!-- 工具面板的胶囊按钮（开始 / 暂停 / 重置）：浅玻璃底，悬停提亮 -->
+        <Style x:Key="ToolsButton" TargetType="Button">
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="8" Background="#1FFFFFFF">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#38FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#12FFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 工具面板的文字按钮（清空）：无底色，只有文字色变化 -->
+        <Style x:Key="ToolsLinkButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Padding="4,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <!-- 窗口固定为最大形态尺寸（展开态）；真正的"岛"是 CapsuleHost，弹簧只改它的宽高。
@@ -193,6 +247,8 @@
               HorizontalAlignment="Center"
               VerticalAlignment="Top"
               Width="124" Height="24"
+              MouseEnter="OnIslandMouseEnter"
+              MouseLeave="OnIslandMouseLeave"
               MouseLeftButtonDown="OnIslandMouseLeftButtonDown"
               MouseMove="OnIslandMouseMove"
               MouseLeftButtonUp="OnIslandMouseLeftButtonUp">
@@ -210,6 +266,7 @@
                     <MenuItem Header="歌词延后 200ms" Click="OnLyricLater"/>
                     <MenuItem Header="歌词偏移归零" Click="OnLyricOffsetReset"/>
                     <Separator/>
+                    <MenuItem Header="工具面板" Click="OnOpenToolsPanel"/>
                     <MenuItem Header="设置" Click="OnOpenSettings"/>
                     <MenuItem Header="退出 Pynelith" Click="OnExit"/>
                 </ContextMenu>
@@ -405,6 +462,11 @@
                                        FontSize="9.5"
                                        FontFamily="Consolas, Cascadia Mono, Segoe UI"
                                        Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock x:Name="IdleDetailStatus"
+                                       Margin="0,2,0,0"
+                                       FontSize="9"
+                                       FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                       Foreground="{StaticResource TextTertiary}"/>
                         </StackPanel>
                     </StackPanel>
                 </Grid>
@@ -787,7 +849,8 @@
             <Grid x:Name="SiriLensHost"
                   Width="260" Height="256"
                   HorizontalAlignment="Center"
-                  VerticalAlignment="Center"
+                  VerticalAlignment="Top"
+                  Margin="0,4,0,0"
                   Opacity="0"
                   Visibility="Collapsed">
                 <Grid.RenderTransform>
@@ -900,5 +963,109 @@
                 </StackPanel>
             </Grid>
         </Grid>
+
+        <!-- 工具面板：右键「工具面板」打开，独立弹层，不参与岛体形变与布局。
+             上半是代码计时器，下半是剪贴板历史（点击条目写回剪贴板）。 -->
+        <Popup x:Name="ToolsPopup"
+               PlacementTarget="{Binding ElementName=CapsuleHost}"
+               Placement="Bottom"
+               VerticalOffset="8"
+               AllowsTransparency="True"
+               StaysOpen="False"
+               PopupAnimation="Fade"
+               Opened="OnToolsPopupOpened"
+               Closed="OnToolsPopupClosed">
+            <Border Width="324"
+                    CornerRadius="18"
+                    Background="#F2171719"
+                    BorderBrush="#26FFFFFF"
+                    BorderThickness="1"
+                    Padding="16,14,16,16">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="28" ShadowDepth="8" Direction="270"
+                                      Opacity="0.5" Color="#000000"/>
+                </Border.Effect>
+
+                <StackPanel>
+                    <!-- 代码计时器 -->
+                    <StackPanel x:Name="ToolsTimerSection">
+                        <TextBlock Text="代码计时器"
+                                   FontSize="11"
+                                   Foreground="{StaticResource TextTertiary}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock x:Name="CodeTimerText"
+                                       Text="00:00.0"
+                                       FontSize="30"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimary}"
+                                       FontFamily="Cascadia Mono, Consolas"
+                                       VerticalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center"
+                                        Margin="14,6,0,0">
+                                <Button x:Name="CodeTimerToggle"
+                                        Width="58"
+                                        Content="开始"
+                                        Style="{StaticResource ToolsButton}"
+                                        Click="OnCodeTimerToggle"/>
+                                <Button Width="58"
+                                        Content="重置"
+                                        Margin="8,0,0,0"
+                                        Style="{StaticResource ToolsButton}"
+                                        Click="OnCodeTimerReset"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Border x:Name="ToolsDivider"
+                            Height="1"
+                            Background="{StaticResource DividerBrush}"
+                            Margin="0,12,0,12"/>
+
+                    <!-- 剪贴板历史 -->
+                    <Grid x:Name="ToolsClipboardSection">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid>
+                            <TextBlock Text="剪贴板历史"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextTertiary}"
+                                       VerticalAlignment="Center"/>
+                            <Button x:Name="ClipboardClearButton"
+                                    Content="清空"
+                                    HorizontalAlignment="Right"
+                                    Style="{StaticResource ToolsLinkButton}"
+                                    Click="OnClearClipboardHistory"/>
+                        </Grid>
+
+                        <TextBlock x:Name="ClipboardEmpty"
+                                   Grid.Row="1"
+                                   Text="还没有记录，复制点什么试试"
+                                   FontSize="12"
+                                   Foreground="{StaticResource TextTertiary}"
+                                   Margin="0,10,0,2"/>
+
+                        <ScrollViewer x:Name="ClipboardScroll"
+                                      Grid.Row="1"
+                                      MaxHeight="190"
+                                      Margin="0,8,0,0"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="ClipboardList"/>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <TextBlock x:Name="ToolsDisabledHint"
+                               Text="工具组件已全部关闭，可在 设置 → 通用 中开启"
+                               FontSize="12"
+                               Foreground="{StaticResource TextTertiary}"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed"/>
+                </StackPanel>
+            </Border>
+        </Popup>
     </Grid>
 </Window>

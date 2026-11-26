@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Pynelith.Plugin.GespCountdown</AssemblyName>
+    <RootNamespace>Pynelith.Plugin.GespCountdown</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Description>GESP 考试倒计时插件（监控源）：状态行显示距目标日期还有多少天</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Pynelith.Plugins.Abstractions\Pynelith.Plugins.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyPluginToIsland" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginTargetDir>$(MSBuildThisFileDirectory)..\..\src\Pynelith.Island\Plugins\$(AssemblyName)</PluginTargetDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <PluginPayload Include="$(TargetDir)$(AssemblyName).dll" />
+      <PluginPayload Include="$(MSBuildThisFileDirectory)plugin.json" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginTargetDir)" />
+    <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginTargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

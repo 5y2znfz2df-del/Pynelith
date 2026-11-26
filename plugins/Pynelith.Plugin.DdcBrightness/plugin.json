@@ -1,0 +1,14 @@
+{
+  "id": "ddc-brightness",
+  "name": "显示器亮度",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "通过 DDC/CI 读取外接显示器亮度并显示在状态行（骨架：只有读取，写入接口预留；部分显示器 / 转接器不支持 DDC/CI）。",
+  "kind": "MonitorSource",
+  "entryAssembly": "Pynelith.Plugin.DdcBrightness.dll",
+  "entryType": "Pynelith.Plugin.DdcBrightness.DdcBrightnessPlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "label": "亮度"
+  }
+}

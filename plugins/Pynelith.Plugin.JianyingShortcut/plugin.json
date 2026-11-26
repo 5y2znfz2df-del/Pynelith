@@ -1,0 +1,14 @@
+{
+  "id": "jianying-shortcut",
+  "name": "剪映快捷指令",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "检测剪映安装位置并推送提示（骨架：自动化剪辑指令留待接入命令行参数 / 草稿工程）。",
+  "kind": "NotificationSource",
+  "entryAssembly": "Pynelith.Plugin.JianyingShortcut.dll",
+  "entryType": "Pynelith.Plugin.JianyingShortcut.JianyingShortcutPlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "executablePath": ""
+  }
+}

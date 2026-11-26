@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    第三方插件契约库：刻意保持零依赖、netstandard2.0，
+    使插件作者只需引用这一个程序集即可编译，无需接触 WPF 主程序。
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Pynelith.Plugins</RootNamespace>
+    <AssemblyName>Pynelith.Plugins.Abstractions</AssemblyName>
+    <Version>1.0.0</Version>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Description>Pynelith 轻量插件契约（通知源 / 监控源 / AI 后端 / 动画皮肤）</Description>
+  </PropertyGroup>
+
+</Project>

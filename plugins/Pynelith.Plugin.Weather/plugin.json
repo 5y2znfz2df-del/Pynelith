@@ -1,0 +1,16 @@
+{
+  "id": "weather",
+  "name": "天气",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "状态行显示当前城市气温与天气；后台每 10 分钟拉取一次 Open-Meteo，全离线判定、失败自动沿用上次结果。",
+  "kind": "MonitorSource",
+  "entryAssembly": "Pynelith.Plugin.Weather.dll",
+  "entryType": "Pynelith.Plugin.Weather.WeatherPlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "city": "上海",
+    "latitude": "31.2304",
+    "longitude": "121.4737"
+  }
+}

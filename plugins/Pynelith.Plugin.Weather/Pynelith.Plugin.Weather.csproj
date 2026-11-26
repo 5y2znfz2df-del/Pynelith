@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Pynelith.Plugin.Weather</AssemblyName>
+    <RootNamespace>Pynelith.Plugin.Weather</RootNamespace>
+    <!-- 插件按"可动态加载"编译：生成 deps.json，宿主用可回收 ALC + AssemblyDependencyResolver 加载 -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Description>天气信息插件（监控源）：后台拉取 Open-Meteo 实况，状态行显示城市与气温</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 契约由宿主提供（Private=false 不复制副本，避免类型身份分裂） -->
+    <ProjectReference Include="..\..\src\Pynelith.Plugins.Abstractions\Pynelith.Plugins.Abstractions.csproj">
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- 编译完成后把 DLL 与 plugin.json 投放进主程序的 Plugins\ 目录，随包分发 -->
+  <Target Name="CopyPluginToIsland" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginTargetDir>$(MSBuildThisFileDirectory)..\..\src\Pynelith.Island\Plugins\$(AssemblyName)</PluginTargetDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <PluginPayload Include="$(TargetDir)$(AssemblyName).dll" />
+      <PluginPayload Include="$(MSBuildThisFileDirectory)plugin.json" />
+    </ItemGroup>
+    <MakeDir Directories="$(PluginTargetDir)" />
+    <Copy SourceFiles="@(PluginPayload)" DestinationFolder="$(PluginTargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

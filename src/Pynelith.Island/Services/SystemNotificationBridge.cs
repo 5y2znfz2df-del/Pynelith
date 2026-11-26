@@ -84,6 +84,9 @@ namespace Pynelith.Island.Services
             _timer.Start();
         }
 
+        /// <summary>暂停轮询（全屏游戏 / 省电场景），恢复时再 Start。</summary>
+        public void Stop() => _timer.Stop();
+
         private async void OnTick(object? sender, EventArgs e)
         {
             if (_polling || _disposed)

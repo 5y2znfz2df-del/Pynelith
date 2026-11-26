@@ -102,8 +102,11 @@ namespace Pynelith.Island.Services.Siri
         /// <summary>WM_HOTKEY 消息号。</summary>
         public const int WM_HOTKEY = 0x0312;
 
-        /// <summary>本程序使用的热键 ID（同一进程只注册一个）。</summary>
+        /// <summary>语音助手热键 ID。</summary>
         public const int HotkeyId = 0x5A17;
+
+        /// <summary>显示 / 隐藏灵动岛热键 ID（与语音助手互不干扰）。</summary>
+        public const int VisibilityHotkeyId = 0x5A18;
 
         private const uint MOD_NOREPEAT = 0x4000;
 
@@ -112,6 +115,10 @@ namespace Pynelith.Island.Services.Siri
 
         /// <summary>在指定窗口上注册热键。失败返回 false（通常是被其它程序占用）。</summary>
         public static bool Register(IntPtr hwnd, HotkeySpec spec)
+            => Register(hwnd, spec, HotkeyId);
+
+        /// <summary>在指定窗口上注册指定 ID 的热键，失败返回 false。</summary>
+        public static bool Register(IntPtr hwnd, HotkeySpec spec, int hotkeyId)
         {
             LastError = 0;
             if (hwnd == IntPtr.Zero)
@@ -119,8 +126,8 @@ namespace Pynelith.Island.Services.Siri
                 return false;
             }
 
-            Unregister(hwnd);
-            bool ok = RegisterHotKey(hwnd, HotkeyId, spec.Modifiers | MOD_NOREPEAT, spec.VirtualKey);
+            Unregister(hwnd, hotkeyId);
+            bool ok = RegisterHotKey(hwnd, hotkeyId, spec.Modifiers | MOD_NOREPEAT, spec.VirtualKey);
             if (!ok)
             {
                 LastError = Marshal.GetLastWin32Error();
@@ -130,14 +137,17 @@ namespace Pynelith.Island.Services.Siri
         }
 
         /// <summary>注销窗口上的热键（未注册也无害）。</summary>
-        public static void Unregister(IntPtr hwnd)
+        public static void Unregister(IntPtr hwnd) => Unregister(hwnd, HotkeyId);
+
+        /// <summary>注销窗口上指定 ID 的热键（未注册也无害）。</summary>
+        public static void Unregister(IntPtr hwnd, int hotkeyId)
         {
             if (hwnd == IntPtr.Zero)
             {
                 return;
             }
 
-            UnregisterHotKey(hwnd, HotkeyId);
+            UnregisterHotKey(hwnd, hotkeyId);
         }
 
         [DllImport("user32.dll", SetLastError = true)]

@@ -55,6 +55,10 @@ namespace Pynelith.Island
             DispatcherUnhandledException += (_, args) =>
             {
                 WriteCrashLog(args.Exception);
+
+                // UI 线程异常不再直接终结进程：记录后标记已处理，岛继续运行。
+                // 否则一次绘制/绑定异常就会让整个灵动岛消失，用户只会看到"闪退"。
+                args.Handled = true;
             };
             AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             {
@@ -126,13 +130,44 @@ namespace Pynelith.Island
             }
         }
 
+        /// <summary>崩溃日志大小上限：超过后轮转为 crash.log.1，避免日志无限增长。</summary>
+        private const long CrashLogMaxBytes = 1024 * 1024;
+
+        private static readonly object CrashLogLock = new object();
+        private static DateTime _lastCrashLogUtc = DateTime.MinValue;
+        private static string _lastCrashSignature = string.Empty;
+
         private static void WriteCrashLog(System.Exception? exception)
         {
             try
             {
+                // 同一个异常反复抛出（例如某个渲染回调每帧失败）时 60 秒内只记一次，
+                // 既保留排查线索，又不会把磁盘写满、把日志刷成噪音。
+                string signature = (exception?.GetType().FullName ?? "null")
+                    + "|" + (exception?.Message ?? string.Empty);
+                DateTime now = DateTime.UtcNow;
+                lock (CrashLogLock)
+                {
+                    if (string.Equals(signature, _lastCrashSignature, StringComparison.Ordinal)
+                        && now - _lastCrashLogUtc < TimeSpan.FromSeconds(60))
+                    {
+                        return;
+                    }
+
+                    _lastCrashSignature = signature;
+                    _lastCrashLogUtc = now;
+                }
+
                 string directory = System.IO.Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Pynelith");
                 System.IO.Directory.CreateDirectory(directory);
+
+                string path = System.IO.Path.Combine(directory, "crash.log");
+                var info = new System.IO.FileInfo(path);
+                if (info.Exists && info.Length > CrashLogMaxBytes)
+                {
+                    System.IO.File.Move(path, path + ".1", overwrite: true);
+                }
 
                 string line = string.Format(
                     "[{0}] {1}{2}{3}",
@@ -141,9 +176,7 @@ namespace Pynelith.Island
                     Environment.NewLine,
                     exception);
 
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(directory, "crash.log"),
-                    line + Environment.NewLine + Environment.NewLine);
+                System.IO.File.AppendAllText(path, line + Environment.NewLine + Environment.NewLine);
             }
             catch (System.Exception)
             {

@@ -37,6 +37,15 @@ namespace Pynelith.Island.Configuration
         private string _progressOffsetPresetId = string.Empty;
         private int _monitorIndex = -1;
         private bool _followSystemTheme = true;
+        private bool _hideInFullscreen = true;
+        private int _animationFps = 60;
+        private bool _hoverExpand = true;
+        private bool _visibilityHotkeyEnabled = true;
+        private string _visibilityHotkey = "Ctrl+Alt+H";
+        private string _pluginCatalogUrl = string.Empty;
+        private bool _showClipboardHistory = true;
+        private bool _showCodeTimer = true;
+        private int _clipboardHistoryLimit = 20;
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -236,6 +245,75 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _followSystemTheme, value);
         }
 
+        /// <summary>
+        /// 全屏应用（游戏 / 全屏视频）在前台时自动隐藏灵动岛并暂停渲染。
+        /// 关闭后保持原样，适合需要在全屏画面里也看到岛的少数场景。
+        /// </summary>
+        public bool HideInFullscreen
+        {
+            get => _hideInFullscreen;
+            set => Set(ref _hideInFullscreen, value);
+        }
+
+        /// <summary>动画帧率：60 / 30 / 0（0 = 关闭动画，形变直接落位）。</summary>
+        public int AnimationFps
+        {
+            get => _animationFps;
+            set => Set(ref _animationFps, value <= 0 ? 0 : Math.Clamp(value, 15, 144));
+        }
+
+        /// <summary>鼠标悬停时自动展开详情（无需点击）。</summary>
+        public bool HoverExpand
+        {
+            get => _hoverExpand;
+            set => Set(ref _hoverExpand, value);
+        }
+
+        /// <summary>显示 / 隐藏灵动岛的全局快捷键开关。</summary>
+        public bool VisibilityHotkeyEnabled
+        {
+            get => _visibilityHotkeyEnabled;
+            set => Set(ref _visibilityHotkeyEnabled, value);
+        }
+
+        /// <summary>显示 / 隐藏快捷键，格式如 "Ctrl+Alt+H"。</summary>
+        public string VisibilityHotkey
+        {
+            get => _visibilityHotkey;
+            set => Set(ref _visibilityHotkey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// 插件市场清单地址（plugin-index.json）。为空时只显示本地缓存。
+        /// 第三方可自建索引，实现"插件清单托管"。
+        /// </summary>
+        public string PluginCatalogUrl
+        {
+            get => _pluginCatalogUrl;
+            set => Set(ref _pluginCatalogUrl, value ?? string.Empty);
+        }
+
+        /// <summary>工具面板是否包含剪贴板历史（关闭后不再监听剪贴板）。</summary>
+        public bool ShowClipboardHistory
+        {
+            get => _showClipboardHistory;
+            set => Set(ref _showClipboardHistory, value);
+        }
+
+        /// <summary>工具面板是否包含代码计时器。</summary>
+        public bool ShowCodeTimer
+        {
+            get => _showCodeTimer;
+            set => Set(ref _showCodeTimer, value);
+        }
+
+        /// <summary>剪贴板历史保留条数（1 ~ 200）。</summary>
+        public int ClipboardHistoryLimit
+        {
+            get => _clipboardHistoryLimit;
+            set => Set(ref _clipboardHistoryLimit, Math.Clamp(value, 1, 200));
+        }
+
         /// <summary>恢复出厂设置（逐项赋值以触发变更通知）。</summary>
         public void ResetToDefaults()
         {
@@ -266,6 +344,15 @@ namespace Pynelith.Island.Configuration
             ProgressOffsetPresetId = defaults.ProgressOffsetPresetId;
             MonitorIndex = defaults.MonitorIndex;
             FollowSystemTheme = defaults.FollowSystemTheme;
+            HideInFullscreen = defaults.HideInFullscreen;
+            AnimationFps = defaults.AnimationFps;
+            HoverExpand = defaults.HoverExpand;
+            VisibilityHotkeyEnabled = defaults.VisibilityHotkeyEnabled;
+            VisibilityHotkey = defaults.VisibilityHotkey;
+            PluginCatalogUrl = defaults.PluginCatalogUrl;
+            ShowClipboardHistory = defaults.ShowClipboardHistory;
+            ShowCodeTimer = defaults.ShowCodeTimer;
+            ClipboardHistoryLimit = defaults.ClipboardHistoryLimit;
         }
 
         private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
