@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.3.0-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.3.1-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -341,6 +341,28 @@ using IGlassSurface backdrop = GlassRenderer.Attach(window, new GlassOptions
 - [x] 多显示器与逐屏 DPI 边界情况
 - [x] 主题跟随系统自动切换深浅配色与图标
 - [x] 玻璃采样移出 UI 线程，彻底消除长帧
+
+## 0.3.1 更新
+
+- **Apple 弹簧动效**：胶囊形变、展开详情、消息气泡、入场与 Siri 透镜共 5 组独立弹簧通道，
+  半隐式欧拉积分、固定 8ms 子步推进；动画中途打断会保留速度，不再从零重启，
+  阻尼比可按场景分别调（0.70 / 0.82 / 0.92 / 1.00）。
+- **轻量插件体系**：只定义四类插件——通知源、监控源、AI 后端、动画皮肤。
+  每个插件跑在自己的可回收 `AssemblyLoadContext` 里，启用、禁用、替换文件都不需要重启主程序；
+  单个插件加载失败只标记自身状态，不连累宿主。
+- **一键导入插件**：支持 zip 与文件夹导入，落到 `%APPDATA%\Pynelith\plugins`，
+  同 id 覆盖内置版本；清单字段全部带默认值，后续新增字段不会破坏老插件。
+- **示例插件**：天气（Open-Meteo 实时天气）、GESP 倒计时可直接使用；
+  DDC 显示器亮度、蓝牙设备电量、剪映快捷指令提供接口与骨架实现。
+- **工具面板**：右键菜单新增「工具面板」，内含代码计时器与剪贴板历史。
+  剪贴板走 `AddClipboardFormatListener` 事件监听而非轮询，重复内容自动置顶，条数可配。
+- **稳定性**：全局未处理异常兜底并写崩溃日志（60 秒去重 + 1MB 轮转）；
+  弹簧单步时长钳制在 50ms 内，调试断点或系统卡顿恢复后不会再被"踢飞"；
+  插件卸载等待 ALC 真正回收，避免插件 DLL 被占用导致删除失败。
+- **测试**：新增 xUnit 工程，覆盖弹簧收敛与过冲、工具服务、清单校验、插件加载与导入，
+  CI 增加 `dotnet test` 步骤。
+- **安装包**：此前只打包单个 exe，内置插件没有随包分发；现在载荷改为整目录压缩，
+  安装后 `Plugins\` 一并落地，覆盖安装时旧插件目录会被整体替换。
 
 ## 0.3.0 更新
 
