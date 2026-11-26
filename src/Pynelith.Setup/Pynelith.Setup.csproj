@@ -19,8 +19,9 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- 载荷：Pynelith.Island 的框架依赖单文件产物（构建安装包前需先发布该 exe） -->
-    <IslandPayload>..\Pynelith.Island\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\Pynelith.Island.exe</IslandPayload>
+    <!-- 载荷目录：Pynelith.Island 的框架依赖单文件产物 + Plugins\ 内置插件 -->
+    <IslandPayloadDir>..\Pynelith.Island\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish</IslandPayloadDir>
+    <IslandPayload>$(IslandPayloadDir)\Pynelith.Island.exe</IslandPayload>
     <!-- 用 BaseIntermediateOutputPath 而不是 IntermediateOutputPath：
          后者在属性求值阶段还是空的，会把 6.5MB 的临时 zip 落到源码目录根下。 -->
     <IslandPayloadZip>$(BaseIntermediateOutputPath)Pynelith.Island.payload.zip</IslandPayloadZip>
@@ -32,7 +33,7 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <!-- 构建时把 25MB 的程序 exe 压成约 6.5MB 的 zip 再嵌入，安装时解压写出 -->
+  <!-- 构建时把发布产物（exe + Plugins 目录）压成 zip 再嵌入，安装时解压写出 -->
   <Target Name="PackIslandPayload" BeforeTargets="PrepareForBuild">
     <!-- 干净的 clone 直接 dotnet build 时，载荷还不存在：先自动发布一次 Island。
          已存在时（本地或 CI 预先 publish）直接复用，避免重复构建。 -->
@@ -42,7 +43,7 @@
 
     <Error Condition="!Exists('$(IslandPayload)')"
            Text="缺少程序载荷：请先发布 Pynelith.Island（框架依赖、win-x64）。" />
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(IslandPayload)' -DestinationPath '$(IslandPayloadZip)' -Force&quot;" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;Compress-Archive -Path '$(IslandPayloadDir)\*' -DestinationPath '$(IslandPayloadZip)' -Force&quot;" />
     <ItemGroup>
       <EmbeddedResource Include="$(IslandPayloadZip)">
         <LogicalName>Pynelith.Island.payload.zip</LogicalName>

@@ -57,7 +57,7 @@ namespace Pynelith.Setup
 
             progress.Report((4, "正在释放程序文件…"));
             string targetExe = Path.Combine(installDir, AppExeName);
-            ExtractPayload(targetExe, percent =>
+            ExtractPayload(installDir, percent =>
                 progress.Report((4 + percent * 72 / 100, "正在释放程序文件… " + percent + "%")));
 
             progress.Report((80, "正在创建快捷方式…"));
@@ -165,8 +165,8 @@ namespace Pynelith.Setup
             }
         }
 
-        /// <summary>解压内嵌的程序 zip 并分块写出，回报百分比。</summary>
-        private static void ExtractPayload(string targetPath, Action<int> onProgress)
+        /// <summary>解压内嵌的程序 zip（exe + Plugins\）到安装目录并分块写出，回报百分比。</summary>
+        private static void ExtractPayload(string installDir, Action<int> onProgress)
         {
             using Stream source = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadResource)
                 ?? throw new InvalidOperationException("安装包不完整：缺少程序文件载荷。");
@@ -179,29 +179,69 @@ namespace Pynelith.Setup
                 throw new InvalidOperationException("安装包不完整：程序文件载荷为空。");
             }
 
-            System.IO.Compression.ZipArchiveEntry entry = archive.Entries[0];
+            // 内置插件目录整体替换，避免覆盖安装后残留上一版已删除的插件
+            string pluginsDir = Path.Combine(installDir, "Plugins");
+            if (Directory.Exists(pluginsDir))
+            {
+                Directory.Delete(pluginsDir, recursive: true);
+            }
 
-            long total = Math.Max(1, entry.Length);
+            long total = 0;
+            foreach (System.IO.Compression.ZipArchiveEntry entry in archive.Entries)
+            {
+                total += Math.Max(0, entry.Length);
+            }
+
+            total = Math.Max(1, total);
+
             byte[] buffer = new byte[1 << 20];
             long copied = 0;
             int lastPercent = -1;
+            string root = Path.GetFullPath(installDir) + Path.DirectorySeparatorChar;
 
-            using Stream payload = entry.Open();
-            using var destination = new FileStream(
-                targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-
-            int read;
-            while ((read = payload.Read(buffer, 0, buffer.Length)) > 0)
+            foreach (System.IO.Compression.ZipArchiveEntry entry in archive.Entries)
             {
-                destination.Write(buffer, 0, read);
-                copied += read;
+                string destination = Path.GetFullPath(Path.Combine(installDir, entry.FullName));
 
-                int percent = (int)(copied * 100 / total);
-                if (percent != lastPercent)
+                // 防目录穿越：zip 内路径必须落在安装目录内
+                if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 {
-                    lastPercent = percent;
-                    onProgress(percent);
+                    continue;
                 }
+
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destination);
+                    continue;
+                }
+
+                string? parent = Path.GetDirectoryName(destination);
+                if (!string.IsNullOrEmpty(parent))
+                {
+                    Directory.CreateDirectory(parent);
+                }
+
+                using Stream payload = entry.Open();
+                using var file = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+
+                int read;
+                while ((read = payload.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    file.Write(buffer, 0, read);
+                    copied += read;
+
+                    int percent = (int)(copied * 100 / total);
+                    if (percent != lastPercent)
+                    {
+                        lastPercent = percent;
+                        onProgress(percent);
+                    }
+                }
+            }
+
+            if (!File.Exists(Path.Combine(installDir, AppExeName)))
+            {
+                throw new InvalidOperationException("安装包不完整：缺少 " + AppExeName + "。");
             }
         }
 
