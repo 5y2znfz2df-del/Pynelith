@@ -5,7 +5,7 @@
     <AssemblyName>Pynelith.Plugin.DdcBrightness</AssemblyName>
     <RootNamespace>Pynelith.Plugin.DdcBrightness</RootNamespace>
     <EnableDynamicLoading>true</EnableDynamicLoading>
-    <Description>DDC/CI 显示器亮度插件（监控源，骨架）：读取主显示器亮度并预留设置接口</Description>
+    <Description>显示器亮度插件（监控源）：外接屏走 DDC/CI，笔记本内屏退回 WMI 读取亮度</Description>
   </PropertyGroup>
 
   <ItemGroup>

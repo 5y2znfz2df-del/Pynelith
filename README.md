@@ -1,4 +1,4 @@
-﻿<div align="center">
+﻿﻿<div align="center">
 
 <img src="assets/icon/png/pynelith-dark-512.png" width="112" alt="Pynelith" />
 
@@ -15,7 +15,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)](#快速开始)
 [![License](https://img.shields.io/badge/License-MIT-3DA639)](LICENSE)
-[![Status](https://img.shields.io/badge/status-beta%200.3.1-orange)](#roadmap)
+[![Status](https://img.shields.io/badge/status-beta%200.4.1-orange)](#roadmap)
 
 <img src="docs/preview.png" width="880" alt="Pynelith 预览" />
 
@@ -167,8 +167,11 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 操作 | 效果 |
 | --- | --- |
 | 系统通知到达 | 岛自动展开显示完整正文，约 5 秒后自动收起 |
-| 左键单击胶囊（待机） | 展开 / 收起大时钟、日期与资源占用 |
+| 左键单击胶囊（待机） | 展开 / 收起插件面板；未安装插件时展开大时钟、日期与资源占用 |
+| 滚轮（插件面板打开时） | 左右滚动切换插件，旧卡滑出、新卡滑入 |
+| ← / →（插件面板打开时） | 与滚轮等效，键盘切换插件；Esc 收起面板 |
 | 左键单击胶囊（播放中） | 展开 / 收起 Apple Music 风格播放面板 |
+| 中键单击胶囊 | 打开 / 收起插件面板（播放中也可用） |
 | 点击 ⏮ ⏸ ⏭ | 上一首 / 播放暂停 / 下一首（经 SMTC） |
 | 拖动进度条 | 跳转到任意播放位置 |
 | 拖动音量条 | 调整系统输出音量（与任务栏音量同步） |
@@ -176,7 +179,7 @@ dotnet publish src/Pynelith.Setup/Pynelith.Setup.csproj -c Release
 | 面板内键盘 | 空格播放/暂停、←→ 快退快进 5 秒、↑↓ 音量、Esc 收起 |
 | 设置 → 外观 → 兼容模式 | 截图 / 录屏时能看到灵动岛，折射 / 色散 / 边缘高光与常规模式一致 |
 | 拖动胶囊 | 改变停靠位置（自动写回配置） |
-| 右键胶囊 | 歌词提前 / 延后 200ms、归零、设置、退出 |
+| 右键胶囊 | 歌词提前 / 延后 200ms、归零、插件面板、工具面板、设置、退出 |
 
 不播放音乐时，胶囊显示**时间**、待机文字与 **CPU / 内存**占用；三者可在
 设置 →「显示内容」里分别开关，胶囊宽度会跟着内容自动收缩。
@@ -202,7 +205,94 @@ Siri 不是写死在岛里的功能，而是一个**可插拔组件**：设置 �
   只保留光带与文字，适合 MX330 这类低配显卡；光带与折射都有独立帧率上限。
 
 Siri 的配置与对话历史分别保存在 `%AppData%\Pynelith\siri.json` 与 `siri-history.json`，
-与岛的主配置 `config.json` 完全独立。MCP 工具调用接口目前只做预留，尚未接入。
+与岛的主配置 `config.json` 完全独立。MCP 客户端可以通过下方的「MCP 桥接」插件把通知与提问推送到岛上。
+
+## 插件
+
+插件是独立的 DLL + `plugin.json`，与主程序通过
+`Pynelith.Plugins.Abstractions` 契约通信（`netstandard2.0`、零依赖）。四类插件：
+
+| 类型 | 作用 |
+| --- | --- |
+| `NotificationSource` | 推送通知（如 MCP 桥接、第三方应用消息） |
+| `MonitorSource` | 向待机态的状态行提供指标（如天气、网速） |
+| `AiBackend` | 为 Siri 提供对话后端 |
+| `Skin` | 自定义动画 / 皮肤 |
+
+### 安装与启停
+
+1. **随包分发**：安装目录下的 `Plugins\<插件id>\`，开箱即用。
+2. **用户导入**：设置 →「插件」→ 导入插件包，解压到
+   `%AppData%\Pynelith\plugins\<插件id>\`；同 id 会覆盖内置版本。
+3. 一个插件目录至少包含 `plugin.json` 与清单里 `entryAssembly` 指向的 DLL。
+4. 启用 / 禁用 / 升级都在设置页完成，**不需要重启主程序**；加载失败只影响该插件，
+   失败原因会显示在插件卡片与设置页里。
+
+插件目录结构示例：
+
+```text
+Pynelith.Plugin.McpBridge/
+  plugin.json
+  Pynelith.Plugin.McpBridge.dll
+```
+
+### 在岛上使用插件
+
+- 待机态（没有播放音乐）**点击胶囊**即可展开插件面板；
+- 播放音乐时左键用于播放详情，**中键单击胶囊**或**右键胶囊 → 插件面板**同样可以打开；
+- 面板打开后，**上下滚动鼠标滚轮**切换插件，切换动画为左右滑动；
+  键盘 `←` / `→` 等效，`Esc` 或再点一次胶囊收起；
+- 卡片展示插件名称、类型与实时指标；当前是第几个插件由底部圆点指示。
+
+### MCP 桥接（Claude Code / Codex / dsh）
+
+内置插件 `mcp-bridge` 会在本机启动一个 MCP 服务（Streamable HTTP）：
+
+```text
+http://127.0.0.1:17863/mcp
+```
+
+只监听 `127.0.0.1`，端口可在插件目录的 `plugin.json` 里用 `settings.port` 修改。
+任何支持 Streamable HTTP 的 MCP 客户端都可接入：
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http pynelith http://127.0.0.1:17863/mcp
+```
+
+**Codex CLI**（`~/.codex/config.toml`）
+
+```toml
+[mcp_servers.pynelith]
+url = "http://127.0.0.1:17863/mcp"
+```
+
+**dsh / 其他客户端**：新增一个 HTTP MCP 服务器，URL 填上面的地址即可。
+
+提供的工具：
+
+| 工具 | 说明 |
+| --- | --- |
+| `notify` | 推送一条岛内通知，走原生通知动效。参数：`title`（必填）、`body`、`app` |
+| `ask` | 弹出**带输入栏**的通知并等待用户回复。参数：`title`、`body`、`timeout_seconds` |
+| `status` | 返回监听地址、运行状态与已处理请求数 |
+
+`ask` 的交互方式与原生通知一致，只是多了一条回复栏：
+
+- 输入内容后按 **Enter** 或点击 **发送** 即返回给 MCP 客户端；
+- **Shift+Enter** 换行，不会发送；
+- 超时、按 Esc / 点击收起、或客户端取消时返回空结果（`(用户未回复 / 已超时)`）。
+
+AI 完成项目后，让客户端调用 `notify` 即可复用灵动岛的原生通知效果；需要确认时调用 `ask`。
+
+### 动画与帧率
+
+动画由 `CompositionTarget.Rendering` 逐帧驱动，与显示器刷新同步：
+
+- 120Hz 屏幕可跑满 **120fps**，60Hz 屏幕为 60fps（上限由显示器决定）；
+- 设置 →「外观」→「动画帧率」可选 `120 / 60 / 30 / 关闭`，默认 120；
+- 「兼容模式」下液态玻璃**仍然保留折射与色散**，同时窗口可被截图 / 录屏。
 
 ## 开机自启与卸载
 
@@ -233,6 +323,8 @@ Siri 的配置与对话历史分别保存在 `%AppData%\Pynelith\siri.json` 与 
 | `GlassBlurStrength` | 玻璃染色浓度 0 – 1 |
 | `CornerRadius` | 玻璃圆角 |
 | `AnimationDurationMs` | 形变动画时长（0 = 关闭动画） |
+| `AnimationFps` | 动画帧率上限：120 / 60 / 30 / 0（默认 120，实际不超过显示器刷新率） |
+| `ScreenshotCompatible` | 兼容模式：窗口可被截图 / 录屏，折射与色散仍然生效 |
 | `LyricsEnabled` | 是否显示歌词行 |
 | `LyricsSourceNetease` / `LyricsSourceQQ` / `LyricsSourceKugou` | 三源开关 |
 | `LyricOffsetMs` | 歌词整体偏移（正值 = 提前） |
@@ -341,6 +433,44 @@ using IGlassSurface backdrop = GlassRenderer.Attach(window, new GlassOptions
 - [x] 多显示器与逐屏 DPI 边界情况
 - [x] 主题跟随系统自动切换深浅配色与图标
 - [x] 玻璃采样移出 UI 线程，彻底消除长帧
+
+## 0.4.1 更新
+
+- **修复液态玻璃下形变卡顿**：玻璃里的背景是 1:1、**不做模糊**的真实桌面像素，
+  但采样固定 24fps、形状更新还被压到每 5 帧一次 —— 胶囊本体按帧平滑在动，
+  玻璃边缘与背景却以约 12Hz 阶梯式跳动，观感就是"只有液态玻璃卡"。
+  现在形变期间玻璃形状逐帧跟随胶囊、采样率提到显示刷新率（最高 60），
+  静止时仍回落到低帧率省电；帧耗时实测未变差（p95 50 → 40ms）。
+- 抓屏缓冲改为 64 网格量化 + 居中留白，形变过程不再反复重建位图；
+  动画期间玻璃层临时走半分辨率缓存，结束后恢复锐利。
+- 纯黑 / 磨砂与液态玻璃的帧耗时实测基本一致，说明剩余抖动来自分层窗口的
+  软件合成节奏，而不是玻璃着色器本身。
+
+## 0.4.0 更新
+
+- **动画性能档位**：弹簧引擎不再固定 8ms 子步，新增三档全局策略。
+  「极致质感」维持完整多通道弹簧；「平衡」改为 16ms 子步，气泡 / 透镜等次要形变走缓动、
+  关闭 Siri 光晕衰减；「省电 / 弱 GPU」彻底关闭子步积分，用指数缓动替代弹簧，
+  帧率上限 30，保留交互时序与手感，专门照顾 MX330 这类 2GB 显存机器。
+- **自动降级**：选「自动」时按显卡专用显存决定起始档位（<1.5GB → 省电，<3.5GB → 平衡），
+  运行期再按实际帧耗时调整：连续慢帧自动降一档，长时间余量充足才回弹。
+  降级时只在岛上亮一颗极小的橙点，不弹通知、不打断操作。
+- **插件可声明档位**：动画皮肤插件实现 `IAnimationQualityAware` 即可声明自己需要的画质，
+  宿主把它当作质量下限，自动降级永远不会低于插件要求的档位；不实现该接口的旧插件照常加载。
+- **形变参数导出**：右键菜单新增「导出形变动画（Lottie）」，开启后录制每一帧胶囊的位置、
+  尺寸与圆角（最多 8 秒 / 600 帧），自动写出 Lottie 5.9 JSON 到 `%APPDATA%\Pynelith\Motion`，
+  After Effects、LottieFiles 可直接打开，用于宣传片工作流。
+- **设置页**：新增「动画档位」分段选择与说明，切换后立即生效，无需重启。
+
+## 0.3.2 更新
+
+- **修复整窗浅色底板与细边框**：Windows 11 会给顶层窗口套用系统背景材质（Mica）。
+  岛本身是逐像素透明的分层窗口，圆角之外应当真正透出桌面，但材质层会把**整个窗口矩形**
+  涂成一块不透明的浅色面，外加一圈细边框 —— 于是本该只有一个胶囊的岛变成一个大方块，
+  开机自启动后尤其明显。现在窗口在创建与首次显示时都会显式关闭系统背景材质
+  （`DWMWA_SYSTEMBACKDROP_TYPE` 设为 `DWMSBT_NONE`），不再受系统或第三方材质工具的接管影响。
+- 若装有 MicaForEveryone 之类的全局材质工具，建议为 `Pynelith.Island` 单独加一条
+  `None` 规则；应用内的关闭逻辑与它互为兜底。
 
 ## 0.3.1 更新
 

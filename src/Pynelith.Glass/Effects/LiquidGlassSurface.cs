@@ -237,8 +237,9 @@ namespace Pynelith.Glass.Effects
         }
 
         /// <summary>
-        /// 动态调整采样帧率：静止时降到 8–10fps，形变动画时回到 24fps。
-        /// 抓屏本身跑在独立工作线程上，这里改的是"提交请求"的频率，
+        /// 动态调整采样帧率：静止时降到 8–10fps，形变动画时提到与显示刷新同步（最高 60）。
+        /// 玻璃里的背景是 1:1 未模糊的真实桌面像素，采样率低于帧率时背景会跳帧，
+        /// 观感就是"玻璃在抖"。抓屏本身跑在独立工作线程上，这里改的是"提交请求"的频率，
         /// 因此降频只影响画面新鲜度，不会影响 UI 线程的响应。
         /// </summary>
         public void SetFrameRate(int framesPerSecond)
@@ -385,23 +386,34 @@ namespace Pynelith.Glass.Effects
                 int height = Math.Max(1, (int)Math.Round(_surface.ActualHeight * dpi.DpiScaleY));
                 int margin = Math.Max(1, (int)Math.Round(_style.CaptureMargin * dpi.DpiScaleX));
 
+                // 抓屏尺寸按固定网格取整（四周补 padding、元素居中）。
+                // 形变动画期间胶囊尺寸每帧都在变，若按真实尺寸请求，工作线程每帧都要
+                // 销毁并重建 DIBSection，UI 线程也要重建 WriteableBitmap 与纹理上传，
+                // 这是液态玻璃明显发卡的首要原因；取整后同一尺寸段内只复用一次。
+                int wantWidth = width + margin * 2;
+                int wantHeight = height + margin * 2;
+                int captureWidth = QuantizeCaptureSize(wantWidth);
+                int captureHeight = QuantizeCaptureSize(wantHeight);
+                int padX = (captureWidth - wantWidth) / 2;
+                int padY = (captureHeight - wantHeight) / 2;
+
                 // 四周多抓一圈：边缘折射要采到玻璃外侧的像素，窗口移动时也不会出现错位切片。
                 // 未被排除出捕获时抓屏里会有玻璃自身，用遮罩抹掉（否则采样会不断吃到自己的输出）。
                 Int32Rect mask = _style.ExcludeFromCapture
                     ? new Int32Rect(0, 0, 0, 0)
-                    : new Int32Rect(margin, margin, width, height);
+                    : new Int32Rect(margin + padX, margin + padY, width, height);
 
                 // 采样区几何先推给着色器：即使这一拍的帧还没抓回来，
                 // 上一帧的画面也会按正确的区域映射，不会出现错位。
-                _effect.BackdropOffset = new Point(margin, margin);
-                _effect.BackdropSize = new Point(width + margin * 2, height + margin * 2);
+                _effect.BackdropOffset = new Point(margin + padX, margin + padY);
+                _effect.BackdropSize = new Point(captureWidth, captureHeight);
 
                 // 抓屏在独立工作线程执行：这里只提交请求，UI 线程不做 BitBlt。
                 _sampler.Request(
-                    (int)Math.Round(origin.X) - margin,
-                    (int)Math.Round(origin.Y) - margin,
-                    width + margin * 2,
-                    height + margin * 2,
+                    (int)Math.Round(origin.X) - margin - padX,
+                    (int)Math.Round(origin.Y) - margin - padY,
+                    captureWidth,
+                    captureHeight,
                     mask);
 
                 // 把工作线程已经抓好的帧（如果上一拍已完成）交给着色器。
@@ -417,6 +429,49 @@ namespace Pynelith.Glass.Effects
             {
                 // 元素已被移出可视化树，停止采样。
                 _timer?.Stop();
+            }
+        }
+
+        /// <summary>
+        /// 抓屏尺寸向上取整到 64 设备像素：胶囊形变时尺寸每帧变化，
+        /// 对齐后同一段尺寸内可复用同一块 DIB / WriteableBitmap，避免逐帧重建纹理。
+        /// </summary>
+        private static int QuantizeCaptureSize(int size)
+        {
+            const int Grid = 64;
+            return Math.Max(Grid, (size + Grid - 1) / Grid * Grid);
+        }
+
+        /// <summary>
+        /// 形变动画期间的降载开关。
+        /// 分层窗口在 WPF 下走软件光栅化，玻璃的像素着色器是逐像素开销的大头；
+        /// 开启后玻璃层先按较低分辨率缓存再放大合成，逐帧着色面积降到约三分之一。
+        /// 动画结束必须关闭，否则静止画面会一直偏软。
+        /// </summary>
+        public void SetFastMode(bool fast)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (fast)
+            {
+                if (_surface.CacheMode is BitmapCache)
+                {
+                    return;
+                }
+
+                _surface.CacheMode = new BitmapCache
+                {
+                    RenderAtScale = 0.55,
+                    EnableClearType = false,
+                    SnapsToDevicePixels = false,
+                };
+            }
+            else if (_surface.CacheMode != null)
+            {
+                _surface.CacheMode = null;
             }
         }
 

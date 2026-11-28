@@ -1,0 +1,14 @@
+{
+  "id": "mcp-bridge",
+  "name": "MCP 桥接",
+  "version": "1.0.0",
+  "author": "Pynelith",
+  "description": "在本机 127.0.0.1:17863 提供 MCP 服务，Claude Code / Codex / dsh 等客户端可推送岛内通知，并通过带输入框的通知向用户提问。",
+  "kind": "NotificationSource",
+  "entryAssembly": "Pynelith.Plugin.McpBridge.dll",
+  "entryType": "Pynelith.Plugin.McpBridge.McpBridgePlugin",
+  "minHostVersion": "0.3.0",
+  "settings": {
+    "port": "17863"
+  }
+}

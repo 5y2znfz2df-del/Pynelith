@@ -104,10 +104,9 @@ namespace Pynelith.Island.Views
                         BandCoreBrightness = 0.90,
                         CaptureMargin = 120,
                         FramesPerSecond = 24,
-                        // 兼容模式（录屏可见）下窗口不能被排除出抓屏，
-                        // 采样会把球体自身抓回来造成自反馈；此时改为「静态玻璃 + 分区染色」，
-                        // 真实桌面由窗口透出，横光按虚拟球面弯曲（着色器里用逆折射坐标）。
-                        TransparentInterior = Config.ScreenshotCompatible,
+                        // 兼容模式（可录屏）下不再把窗口排除出抓屏，而是用采样遮罩剔除自身区域：
+                        // 遮罩内的像素由四邻边缘插值重建，因此折射 + 色散仍然生效，且不会被录屏漏掉。
+                        TransparentInterior = false,
                         ExcludeFromCapture = !Config.ScreenshotCompatible,
                     });
 

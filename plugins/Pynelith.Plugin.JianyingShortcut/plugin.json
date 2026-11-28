@@ -3,7 +3,7 @@
   "name": "剪映快捷指令",
   "version": "1.0.0",
   "author": "Pynelith",
-  "description": "检测剪映安装位置并推送提示（骨架：自动化剪辑指令留待接入命令行参数 / 草稿工程）。",
+  "description": "检测本机剪映安装位置，启动后在岛上推送就绪提示；settings.executablePath 可指定 JianyingPro.exe 的完整路径。",
   "kind": "NotificationSource",
   "entryAssembly": "Pynelith.Plugin.JianyingShortcut.dll",
   "entryType": "Pynelith.Plugin.JianyingShortcut.JianyingShortcutPlugin",

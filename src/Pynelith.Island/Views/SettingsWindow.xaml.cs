@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -77,6 +78,11 @@ namespace Pynelith.Island.Views
             _siri = siri;
 
             InitializeComponent();
+
+            // 插件拖入即装：从资源管理器拖 zip 包或插件文件夹到窗口任意位置
+            AllowDrop = true;
+            PreviewDragOver += OnPluginDragOver;
+            Drop += OnPluginDrop;
 
             BuildSidebar();
             BuildPages();
@@ -287,15 +293,26 @@ namespace Pynelith.Island.Views
 
             var island = NewGroup(page, "灵动岛");
             AddSegmented(island, "动画帧率",
-                new[] { ("60", "60 fps"), ("30", "30 fps"), ("0", "关闭") },
+                new[] { ("120", "120 fps"), ("60", "60 fps"), ("30", "30 fps"), ("0", "关闭") },
                 () => Config.AnimationFps.ToString(),
-                v => Config.AnimationFps = int.TryParse(v, out int fps) ? fps : 60);
+                v => Config.AnimationFps = int.TryParse(v, out int fps) ? fps : 120);
+            AddSegmented(island, "动画档位", AnimationQualityModes.All,
+                () => Config.AnimationQuality,
+                v => Config.AnimationQuality = v);
             AddStepper(island, "动画时长 (ms)", 0, 800, 20, 0,
                 () => Config.AnimationDurationMs, v => Config.AnimationDurationMs = (int)Math.Round(v));
             AddToggle(island, "悬停自动展开",
                 () => Config.HoverExpand, v => Config.HoverExpand = v);
             AddToggle(island, "全屏应用时自动隐藏",
                 () => Config.HideInFullscreen, v => Config.HideInFullscreen = v);
+            AddNote(island, "档位说明",
+                "极致质感 = 8ms 子步的完整多通道弹簧（默认）；平衡 = 16ms 子步，气泡 / 透镜等次要形变走缓动；"
+                + "省电 = 关闭子步积分，全部改为指数缓动，帧率上限 30，适合 MX330 这类弱 GPU。");
+            AddNote(island, "自动降级",
+                "选「自动」时按显卡显存决定起始档位，并在动画过程中检测实际帧耗时：连续慢帧自动降一档，"
+                + "长时间余量充足才回弹。降级时岛上会亮一颗极小的橙点，不弹通知。");
+            AddNote(island, "插件下限",
+                "动画皮肤插件可通过 IAnimationQualityAware 声明自己需要的档位，自动降级不会低于该档位。");
             AddNote(island, "性能建议",
                 "老笔记本把动画帧率降到 30 fps 或关闭，形变会直接落位，不再逐帧重绘弹簧与玻璃采样。");
             AddNote(island, "全屏降载",
@@ -847,10 +864,11 @@ namespace Pynelith.Island.Views
 
             var setup = NewGroup(page, "插件");
             AddButton(setup, "导入插件包…", ImportPluginPackage);
-            AddTextBox(setup, "插件市场地址", () => Config.PluginCatalogUrl, v => Config.PluginCatalogUrl = v);
+            AddTextBox(setup, "插件市场地址（留空用官方）", () => Config.PluginCatalogUrl, v => Config.PluginCatalogUrl = v);
             AddButton(setup, "刷新插件市场", () => _ = RefreshCatalogAsync());
             AddDescription(setup,
-                "只支持四类插件：通知源、监控源、AI 后端、动画皮肤。导入或切换后立即生效，无需重启主程序。");
+                "只支持四类插件：通知源、监控源、AI 后端、动画皮肤。导入或切换后立即生效，无需重启主程序。"
+                + " 也可以把下载好的插件 zip（或已解压的插件文件夹）直接拖进本窗口安装。");
 
             var catalogGroup = NewGroup(page, "插件市场");
             var catalogRows = new StackPanel { Margin = new Thickness(14, 10, 14, 12) };
@@ -1059,6 +1077,94 @@ namespace Pynelith.Island.Views
             _plugins.LoadAll();
             RefreshPluginList();
             ShowCatalogStatus("已导入 " + result.PluginId + "，无需重启已生效");
+        }
+
+        /// <summary>从拖拽数据里挑出可安装的条目：.zip 包或含 plugin.json 的目录。</summary>
+        private static List<string> GetDroppedPluginPaths(IDataObject? data)
+        {
+            var result = new List<string>();
+
+            if (data == null || !data.GetDataPresent(DataFormats.FileDrop))
+            {
+                return result;
+            }
+
+            if (data.GetData(DataFormats.FileDrop) is not string[] paths)
+            {
+                return result;
+            }
+
+            foreach (string path in paths)
+            {
+                if (Directory.Exists(path))
+                {
+                    result.Add(path);
+                }
+                else if (File.Exists(path) &&
+                         string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(path);
+                }
+            }
+
+            return result;
+        }
+
+        private void OnPluginDragOver(object sender, DragEventArgs e)
+        {
+            e.Effects = GetDroppedPluginPaths(e.Data).Count > 0
+                ? DragDropEffects.Copy
+                : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void OnPluginDrop(object sender, DragEventArgs e)
+        {
+            List<string> paths = GetDroppedPluginPaths(e.Data);
+            if (paths.Count == 0)
+            {
+                return;
+            }
+
+            var installed = new List<string>();
+            var failed = new List<string>();
+
+            foreach (string path in paths)
+            {
+                PluginImportResult result = Directory.Exists(path)
+                    ? PluginInstaller.ImportDirectory(path, _plugins.UserPluginRoot)
+                    : PluginInstaller.ImportZip(path, _plugins.UserPluginRoot);
+
+                if (result.Success)
+                {
+                    installed.Add(result.PluginId);
+                }
+                else
+                {
+                    failed.Add(Path.GetFileName(path) + "：" + result.Error);
+                }
+            }
+
+            if (installed.Count > 0)
+            {
+                // 与导入按钮同一路径：重新扫描后立即装载，无需重启
+                _plugins.LoadAll();
+                RefreshPluginList();
+            }
+
+            // 切到插件页，让用户直接看到安装结果
+            SelectPage("plugins");
+
+            if (failed.Count == 0)
+            {
+                ShowCatalogStatus("已导入 " + string.Join("、", installed) + "，无需重启已生效");
+            }
+            else
+            {
+                ShowCatalogStatus("部分导入失败：" + string.Join("；", failed));
+            }
+
+            e.Handled = true;
         }
 
         private async Task RefreshCatalogAsync()

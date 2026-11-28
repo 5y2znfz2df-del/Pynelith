@@ -82,4 +82,51 @@ namespace Pynelith.Plugins
         /// <summary>配色与形态参数。</summary>
         SkinPalette Palette { get; }
     }
+
+    /// <summary>
+    /// 可选能力：宿主允许插件向用户提问并等待回复（MCP 等交互插件使用）。
+    /// 插件通过 <c>host as IInteractiveHost</c> 探测，不支持时退化为普通通知。
+    /// 这是 1.1 新增的接口，未实现它的宿主仍可正常加载旧插件。
+    /// </summary>
+    public interface IInteractiveHost
+    {
+        /// <summary>
+        /// 在岛上弹出带输入框的通知，等待用户输入。
+        /// 用户发送时返回输入文本；超时、取消或用户关闭时返回 null。
+        /// </summary>
+        /// <param name="title">标题，通常填来源（例如 Claude Code）。</param>
+        /// <param name="body">正文，即要展示给用户的内容。</param>
+        /// <param name="timeoutSeconds">等待秒数；≤0 表示使用宿主默认值。</param>
+        /// <param name="cancellationToken">取消后立即返回 null 并收起输入框。</param>
+        Task<string?> AskUserAsync(
+            string title,
+            string body,
+            int timeoutSeconds,
+            CancellationToken cancellationToken);
+    }
+
+    /// <summary>动画皮肤插件可声明的动画档位（数值越小画质越高）。</summary>
+    public enum PluginAnimationQuality
+    {
+        /// <summary>极致质感：完整多通道弹簧。</summary>
+        Quality = 0,
+
+        /// <summary>平衡：16ms 子步，次要形变走缓动。</summary>
+        Balanced = 1,
+
+        /// <summary>省电：全部改为缓动。</summary>
+        Eco = 2,
+    }
+
+    /// <summary>
+    /// 可选能力：动画皮肤插件声明自己需要哪一档动画（1.2 新增）。
+    /// 宿主把它当作质量下限 —— 「自动」档的降级永远不会低于插件要求的档位，
+    /// 因为换了一套视觉就必须保留它依赖的形变细节。
+    /// 不实现该接口的皮肤仍可正常加载。
+    /// </summary>
+    public interface IAnimationQualityAware
+    {
+        /// <summary>希望宿主至少保持的动画档位。</summary>
+        PluginAnimationQuality PreferredAnimationQuality { get; }
+    }
 }

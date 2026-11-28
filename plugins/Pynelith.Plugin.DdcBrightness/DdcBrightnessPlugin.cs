@@ -2,16 +2,17 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using Pynelith.Plugins;
 
 namespace Pynelith.Plugin.DdcBrightness
 {
     /// <summary>
-    /// DDC/CI 显示器亮度（监控源，骨架）。
+    /// 显示器亮度（监控源）。
     ///
-    /// 已实现：通过 dxva2.dll 读取主显示器的当前亮度。
-    /// 预留：<see cref="SetBrightness"/> 是写入接口，后续接滑块 / 快捷键时直接调用即可。
-    /// 注意：笔记本内屏通常不支持 DDC/CI，读取会失败（此时插件静默返回空指标）。
+    /// 优先通过 dxva2.dll 走 DDC/CI 读取外接显示器亮度；
+    /// 笔记本内屏不支持 DDC/CI，此时退回 WMI（WmiMonitorBrightness）读取内屏亮度。
+    /// 预留：<see cref="SetBrightness"/> 是 DDC/CI 写入接口，后续接滑块 / 快捷键时直接调用即可。
     /// </summary>
     public sealed class DdcBrightnessPlugin : IMonitorSourcePlugin
     {
@@ -24,9 +25,21 @@ namespace Pynelith.Plugin.DdcBrightness
 
         public void Initialize(IPluginHost host) => _host = host;
 
+        [SupportedOSPlatform("windows")]
         public IReadOnlyList<PluginMetric> Poll()
         {
-            if (!TryReadBrightness(out uint current, out uint maximum) || maximum == 0)
+            int percent;
+
+            if (TryReadBrightness(out uint current, out uint maximum) && maximum > 0)
+            {
+                percent = (int)Math.Round(current * 100.0 / maximum);
+            }
+            else if (TryReadWmiBrightness(out int wmiPercent))
+            {
+                // 笔记本内屏：DDC/CI 不可用，WMI 仍能给出百分比
+                percent = wmiPercent;
+            }
+            else
             {
                 if (!_loggedFailure)
                 {
@@ -39,16 +52,62 @@ namespace Pynelith.Plugin.DdcBrightness
 
             _loggedFailure = false;
             string label = _host?.GetSetting("label", "亮度") ?? "亮度";
-            int percent = (int)Math.Round(current * 100.0 / maximum);
 
             return new[]
             {
                 new PluginMetric(
                     "brightness",
                     label,
-                    percent.ToString(CultureInfo.InvariantCulture),
+                    Math.Clamp(percent, 0, 100).ToString(CultureInfo.InvariantCulture),
                     "%"),
             };
+        }
+
+        /// <summary>
+        /// 笔记本内屏亮度：WMI 的 WmiMonitorBrightness.CurrentBrightness。
+        /// 走 COM 晚绑定（WbemScripting.SWbemLocator），不引入额外的程序集依赖。
+        /// </summary>
+        [SupportedOSPlatform("windows")]
+        private static bool TryReadWmiBrightness(out int percent)
+        {
+            percent = 0;
+
+            try
+            {
+                Type? locatorType = Type.GetTypeFromProgID("WbemScripting.SWbemLocator");
+                if (locatorType == null)
+                {
+                    return false;
+                }
+
+                object? locator = Activator.CreateInstance(locatorType);
+                if (locator == null)
+                {
+                    return false;
+                }
+
+                dynamic wmi = locator;
+                dynamic service = wmi.ConnectServer(".", @"root\WMI");
+                dynamic results = service.ExecQuery("SELECT CurrentBrightness FROM WmiMonitorBrightness");
+
+                foreach (dynamic item in results)
+                {
+                    object value = item.CurrentBrightness;
+                    if (value == null)
+                    {
+                        continue;
+                    }
+
+                    percent = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                    return percent >= 0;
+                }
+            }
+            catch (Exception)
+            {
+                // 无 WMI 服务 / 权限时静默失败，交给上层返回空指标
+            }
+
+            return false;
         }
 
         /// <summary>预留的写入接口：0 ~ 100。</summary>

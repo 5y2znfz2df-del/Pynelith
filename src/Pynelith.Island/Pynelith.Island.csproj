@@ -73,6 +73,7 @@
     <ProjectReference Include="..\..\plugins\Pynelith.Plugin.DdcBrightness\Pynelith.Plugin.DdcBrightness.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\plugins\Pynelith.Plugin.BluetoothBattery\Pynelith.Plugin.BluetoothBattery.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\plugins\Pynelith.Plugin.JianyingShortcut\Pynelith.Plugin.JianyingShortcut.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\plugins\Pynelith.Plugin.McpBridge\Pynelith.Plugin.McpBridge.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- 把 Plugins\ 整棵目录同步到 bin 与 publish 输出。

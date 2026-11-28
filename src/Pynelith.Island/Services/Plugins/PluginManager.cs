@@ -66,6 +66,8 @@ namespace Pynelith.Island.Services.Plugins
         private readonly List<LoadedPlugin> _loaded = new List<LoadedPlugin>();
         private readonly List<PluginDescriptor> _descriptors = new List<PluginDescriptor>();
         private readonly Dictionary<string, string> _metricCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<PluginMetric>> _metricsByPlugin =
+            new Dictionary<string, List<PluginMetric>>(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, bool> _enabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private bool _disposed;
 
@@ -124,6 +126,12 @@ namespace Pynelith.Island.Services.Plugins
             }
         }
 
+        /// <summary>
+        /// 带输入框的通知处理器（由主窗口注入）。
+        /// 参数：标题、正文、超时秒数、取消令牌；返回用户输入，取消或超时返回 null。
+        /// </summary>
+        public Func<string, string, int, CancellationToken, Task<string?>>? AskHandler { get; set; }
+
         /// <summary>把所有监控插件的最新指标拼成一行（最多两条），供空闲态展示。</summary>
         public string MetricSummary
         {
@@ -137,6 +145,35 @@ namespace Pynelith.Island.Services.Plugins
                     }
 
                     return string.Join(" · ", _metricCache.Values.Take(2));
+                }
+            }
+        }
+
+        /// <summary>
+        /// 已加载插件里声明的最低动画档位（数值越小画质越高）。
+        /// 动画皮肤通过 <see cref="IAnimationQualityAware"/> 声明；没有声明返回 null。
+        /// </summary>
+        public PluginAnimationQuality? PreferredAnimationQuality
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    PluginAnimationQuality? best = null;
+
+                    foreach (LoadedPlugin plugin in _loaded)
+                    {
+                        if (plugin.Instance is IAnimationQualityAware aware)
+                        {
+                            PluginAnimationQuality value = aware.PreferredAnimationQuality;
+                            if (best == null || value < best.Value)
+                            {
+                                best = value;
+                            }
+                        }
+                    }
+
+                    return best;
                 }
             }
         }
@@ -647,6 +684,12 @@ namespace Pynelith.Island.Services.Plugins
 
             lock (_gate)
             {
+                if (!_metricsByPlugin.TryGetValue(descriptor.Manifest.Id, out List<PluginMetric>? list))
+                {
+                    list = new List<PluginMetric>();
+                    _metricsByPlugin[descriptor.Manifest.Id] = list;
+                }
+
                 foreach (PluginMetric metric in metrics)
                 {
                     if (string.IsNullOrWhiteSpace(metric.Key))
@@ -655,10 +698,31 @@ namespace Pynelith.Island.Services.Plugins
                     }
 
                     _metricCache[descriptor.Manifest.Id + "." + metric.Key] = metric.ToDisplayText();
+
+                    int index = list.FindIndex(m => string.Equals(m.Key, metric.Key, StringComparison.Ordinal));
+                    if (index >= 0)
+                    {
+                        list[index] = metric;
+                    }
+                    else
+                    {
+                        list.Add(metric);
+                    }
                 }
             }
 
             MetricsUpdated?.Invoke(this, new PluginMetricsEventArgs(descriptor, metrics));
+        }
+
+        /// <summary>某个插件的最新指标快照（插件面板按卡片展示）。</summary>
+        public IReadOnlyList<PluginMetric> GetMetrics(string id)
+        {
+            lock (_gate)
+            {
+                return _metricsByPlugin.TryGetValue(id, out List<PluginMetric>? list)
+                    ? list.ToArray()
+                    : Array.Empty<PluginMetric>();
+            }
         }
 
         private void RaiseChanged()

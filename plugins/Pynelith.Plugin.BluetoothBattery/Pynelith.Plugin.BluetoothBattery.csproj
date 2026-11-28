@@ -5,7 +5,7 @@
     <AssemblyName>Pynelith.Plugin.BluetoothBattery</AssemblyName>
     <RootNamespace>Pynelith.Plugin.BluetoothBattery</RootNamespace>
     <EnableDynamicLoading>true</EnableDynamicLoading>
-    <Description>蓝牙设备电量插件（监控源，骨架）：接口与轮询已就绪，设备枚举留待接入 WinRT</Description>
+    <Description>蓝牙设备电量插件（监控源）：通过 ConfigMgr 读取系统缓存的 DEVPKEY_Bluetooth_Battery</Description>
   </PropertyGroup>
 
   <ItemGroup>

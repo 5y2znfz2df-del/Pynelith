@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -61,7 +61,7 @@ namespace Pynelith.Setup
 
             _subtitle = new Label
             {
-                Text = "版本 beta0.3.1 · 仿 iOS 灵动岛播放面板",
+                Text = "版本 beta0.4.1 · 仿 iOS 灵动岛播放面板",
                 ForeColor = InkSoft,
                 AutoSize = true,
                 Location = new Point(32, 70),
@@ -244,7 +244,7 @@ namespace Pynelith.Setup
                 _installButton.Text = "启动 Pynelith";
                 _pathBox.Enabled = false;
                 _uninstallLink.Visible = true;
-                _subtitle.Text = "版本 beta0.3.1 · 安装成功";
+                _subtitle.Text = "版本 beta0.4.1 · 安装成功";
 
                 bool started = await Task.Run(LaunchInstalled);
                 _status.Text = started

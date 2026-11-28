@@ -1,4 +1,4 @@
-﻿<Project>
+<Project>
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -6,7 +6,7 @@
     <Deterministic>true</Deterministic>
     <Company>Pynelith</Company>
     <Product>Pynelith</Product>
-    <Version>0.3.1</Version>
+    <Version>0.4.1</Version>
     <!-- 纯 Win32/DWM 渲染通道，无需 WinRT 投影，零 NuGet 依赖 -->
     <TargetFramework>net8.0-windows</TargetFramework>
   </PropertyGroup>

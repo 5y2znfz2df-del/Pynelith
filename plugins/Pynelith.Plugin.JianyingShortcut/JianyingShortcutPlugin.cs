@@ -39,7 +39,7 @@ namespace Pynelith.Plugin.JianyingShortcut
             }
 
             host.Log("已找到剪映：" + found);
-            Raise("剪映已就绪", "快捷指令入口已注册（骨架版，暂只做状态检测）。");
+            Raise("剪映已就绪", "已检测到 " + found + "，可在 plugin.json 的 executablePath 指定其它路径。");
         }
 
         private static string? FindExecutable(string configured)

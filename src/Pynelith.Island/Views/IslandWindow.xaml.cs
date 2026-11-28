@@ -22,8 +22,10 @@ using Pynelith.Island.Models;
 using Pynelith.Island.Services;
 using Pynelith.Island.Services.Lyrics;
 using Pynelith.Island.Services.Media;
+using Pynelith.Island.Services.Motion;
 using Pynelith.Island.Services.Plugins;
 using Pynelith.Island.Services.Siri;
+using Pynelith.Plugins;
 
 namespace Pynelith.Island.Views
 {
@@ -57,6 +59,12 @@ namespace Pynelith.Island.Views
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
+        private const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+        private const int DWMSBT_NONE = 1;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
         private readonly ConfigService _service;
         private readonly MediaSessionService _media;
         private readonly LyricsService _lyrics;
@@ -66,7 +74,8 @@ namespace Pynelith.Island.Views
         private readonly DispatcherTimer _clockTimer;
         private readonly DispatcherTimer _lyricTimer;
         private readonly DispatcherTimer _topmostTimer;
-        private readonly DispatcherTimer _springTimer;
+        // 弹簧动画由 CompositionTarget.Rendering 逐帧驱动：
+        // 与显示器刷新同步（120Hz 屏即 120fps），比 8ms 定时器（Windows 计时精度约 15.6ms）更稳。
         private readonly FullscreenWatcher _fullscreen = new FullscreenWatcher();
         private bool _hiddenByFullscreen;
         private readonly RectangleGeometry _capsuleClip = new RectangleGeometry();
@@ -89,6 +98,8 @@ namespace Pynelith.Island.Views
         private readonly SpringChannel _messageSpring = new SpringChannel { Zeta = MessageZeta };
         private readonly SpringChannel _introSpring = new SpringChannel { Zeta = SpringZeta };
         private readonly SpringChannel _siriSpring = new SpringChannel { Zeta = SiriZeta };
+        private readonly SpringChannel _pluginSpring = new SpringChannel { Zeta = 0.94 };
+        private readonly SpringChannel _pluginSlideSpring = new SpringChannel { Zeta = 0.86 };
         private bool _springRunning;
         private long _lastFrameTicks;
 
@@ -104,7 +115,6 @@ namespace Pynelith.Island.Views
         private double _lastGlassRadius = -1;
         private double _lastGlassSplit = -1;
         private bool _glassDirty; // 配置里的玻璃参数变了，下一帧强制推给渲染模块
-        private int _glassFrameSkip;
         private long _springStartTicks;
 
         // 详情展开状态
@@ -117,6 +127,25 @@ namespace Pynelith.Island.Views
         private bool _messageShowing;
         private double _notifWidth = 300;
         private double _notifHeight = 96;
+
+        // 插件面板：待机点击展开，滚轮左右切换卡片；_pluginSpring 为展开度
+        private const double PluginPanelWidth = 300;
+        private const double PluginPanelHeight = 118;
+        private const double PluginSlideDistance = 46;
+        private readonly List<PluginDescriptor> _pluginCards = new List<PluginDescriptor>();
+        private readonly Dictionary<string, IReadOnlyList<PluginMetric>> _pluginMetrics =
+            new Dictionary<string, IReadOnlyList<PluginMetric>>(StringComparer.OrdinalIgnoreCase);
+        private int _pluginIndex;
+        private double _pluginSlideDirection = 1;
+        private int _pluginIncomingIndex;
+        private bool _pluginSlideActive;
+        private bool _pluginTarget;
+
+        // 交互通知（MCP）：带输入框，等待用户回复
+        private TaskCompletionSource<string?>? _replyCompletion;
+        private CancellationTokenRegistration _replyCancel;
+        private DispatcherTimer? _replyTimeoutTimer;
+        private bool _replyActive;
 
         // 欢迎动画期间的胶囊撑开：_introSpring 为展开度，独立的弹簧通道。
         // 用户可能把胶囊收得很小（如 58×22），放不下 hello，因此动画期间临时撑开。
@@ -186,6 +215,14 @@ namespace Pynelith.Island.Views
         private HwndSource? _visibilityHotkeySource;
         private bool _hiddenByUser;
         private bool _dockGuardActive;
+
+        // 动画档位：三档策略（极致 / 平衡 / 省电）与自动降级都在这里收敛
+        private readonly AnimationQualityGovernor _quality = new AnimationQualityGovernor();
+        private AnimationTuning _tuning = AnimationQualityModes.Tuning(AnimationProfile.Quality);
+        private string _appliedQualityKey = string.Empty;
+
+        // 形变录制：右键菜单开启，用于导出 Lottie 宣传片素材
+        private readonly MotionTrace _motion = new MotionTrace();
 
         private string _trackFingerprint = string.Empty;
         private LrcDocument? _currentLrc;
@@ -269,6 +306,12 @@ namespace Pynelith.Island.Views
             _plugins = new PluginManager(AppContext.BaseDirectory);
             _plugins.NotificationReceived += OnPluginNotification;
             _plugins.MetricsUpdated += OnPluginMetricsUpdated;
+            _plugins.Changed += OnPluginsChanged;
+            // MCP 等插件的 ask 工具：在岛内弹出带输入框的通知并等待用户回复
+            _plugins.AskHandler = AskUserAsync;
+
+            // ---- 动画档位：用户选择 + 显存容量 + 皮肤插件诉求，合成实际使用的弹簧参数 ----
+            InitAnimationQuality();
 
             // ---- 工具面板：剪贴板监听 + 代码计时器 ----
             _clipboard.Limit = Config.ClipboardHistoryLimit;
@@ -290,13 +333,9 @@ namespace Pynelith.Island.Views
             };
             _messageHoldTimer.Tick += (_, _) => Guarded(OnMessageHoldElapsed);
 
-            // 弹簧驱动改用定时器：CompositionTarget.Rendering 只在有画面需要合成时触发，
-            // 纯黑 / 磨砂且内容全关时窗口完全静止，Rendering 不会来，动画会永远停在第一帧。
-            _springTimer = new DispatcherTimer(DispatcherPriority.Normal)
-            {
-                Interval = TimeSpan.FromMilliseconds(8),
-            };
-            _springTimer.Tick += OnSpringTimerTick;
+            // 弹簧驱动使用 CompositionTarget.Rendering：动画期间订阅、结算后解绑。
+            // 它随显示器刷新触发，120Hz 屏可直接跑满 120fps；
+            // 纯静止时不会触发，因此只在动画期间订阅（见 EnsureSpring / StopSpring）。
 
             _clockTimer = new DispatcherTimer(DispatcherPriority.Normal)
             {
@@ -372,6 +411,10 @@ namespace Pynelith.Island.Views
             // 键盘无障碍：面板展开后可用空格 / 方向键 / Esc 操作，无需精确点击小控件
             PreviewKeyDown += OnIslandKeyDown;
 
+            // 插件面板展开后，滚轮左右切换插件卡片
+            CapsuleHost.PreviewMouseWheel += OnIslandWheel;
+            CapsuleHost.MouseUp += OnIslandMiddleUp;
+
             _service.Changed += OnConfigChanged;
             _feed.Notifications.CollectionChanged += (_, _) => UpdateTexts();
             _media.StateChanged += OnMediaStateChanged;
@@ -382,6 +425,9 @@ namespace Pynelith.Island.Views
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            // 窗口真正显示后 DWM 才套用系统背景材质，SourceInitialized 里那次会被覆盖，这里再关一次
+            DisableSystemBackdrop(_hwnd);
+
             ApplyWindowSize();
             ApplyMorph(_morphSpring.Value);
             UpdateTexts();
@@ -747,10 +793,24 @@ namespace Pynelith.Island.Views
             if (PresentationSource.FromVisual(this) is HwndSource src)
             {
                 _hwnd = src.Handle;
+                DisableSystemBackdrop(_hwnd);
                 src.AddHook(DockGuardWndProc);
                 AttachSiriHotkey(src);
                 AttachVisibilityHotkey(src);
             }
+        }
+
+        /// <summary>
+        /// 关掉 DWM 系统背景材质。
+        /// 窗口本身完全由 WPF 逐像素 alpha 绘制（圆角外应为真正透明），
+        /// 但 Win11 会给顶层窗口套用系统背景材质（Mica）。在这种全透明分层窗口上，
+        /// 它会铺满整个窗口矩形，表现为一块不透明的浅色底 + 一圈细边框，
+        /// 把本该只有一个胶囊的"岛"撑成一个大方块。显式设为 DWMSBT_NONE 即可。
+        /// </summary>
+        private static void DisableSystemBackdrop(IntPtr hwnd)
+        {
+            int none = DWMSBT_NONE;
+            DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ref none, sizeof(int));
         }
 
         #region 显示 / 隐藏快捷键
@@ -987,6 +1047,17 @@ namespace Pynelith.Island.Views
             {
                 RefreshToolsPanel();
             }
+
+            // 动画档位：用户在设置里切换后立即重新合成（硬件档位与插件下限一并带上）
+            if (!string.Equals(_appliedQualityKey, Config.AnimationQuality, StringComparison.Ordinal))
+            {
+                _appliedQualityKey = Config.AnimationQuality;
+                _quality.Configure(
+                    Config.AnimationQuality,
+                    AnimationHardwareProbe.TryGetVideoMemoryBytes(),
+                    PluginAnimationFloor());
+                ApplyAnimationQuality();
+            }
         }
 
         /// <summary>按配置启停系统深浅色监听。</summary>
@@ -1103,7 +1174,6 @@ namespace Pynelith.Island.Views
             _lastGlassRadius = -1;
             _lastGlassSplit = -1;
             _glassDirty = true;
-            _glassFrameSkip = 0;
             ApplyMorph(_morphSpring.Value);
         }
 
@@ -1284,13 +1354,26 @@ namespace Pynelith.Island.Views
 
         private void OnMetricsUpdated(object? sender, EventArgs e) => UpdateMetricsText();
 
-        /// <summary>插件指标更新：回到 UI 线程刷新状态行。</summary>
+        /// <summary>插件指标更新：回到 UI 线程刷新状态行与插件卡片。</summary>
         private void OnPluginMetricsUpdated(object? sender, PluginMetricsEventArgs e)
         {
             if (!Dispatcher.CheckAccess())
             {
                 Dispatcher.BeginInvoke(new Action(() => OnPluginMetricsUpdated(sender, e)));
                 return;
+            }
+
+            string id = e.Plugin.Manifest.Id;
+            _pluginMetrics[id] = e.Metrics;
+
+            // 当前卡片正在展示这个插件：立即刷新数字
+            if (_pluginTarget && !_pluginSlideActive && _pluginCards.Count > 0)
+            {
+                PluginDescriptor current = _pluginCards[Math.Clamp(_pluginIndex, 0, _pluginCards.Count - 1)];
+                if (string.Equals(current.Manifest.Id, id, StringComparison.OrdinalIgnoreCase))
+                {
+                    RenderFrontPluginCard();
+                }
             }
 
             UpdateMetricsText();
@@ -1318,6 +1401,661 @@ namespace Pynelith.Island.Views
                 Accent = AccentPink,
             });
         }
+
+        #region 动画档位（三档策略 / 自动降级 / 形变录制）
+
+        private void InitAnimationQuality()
+        {
+            _quality.LevelChanged += OnAnimationQualityChanged;
+            _motion.Completed += OnMotionTraceCompleted;
+            _appliedQualityKey = Config.AnimationQuality;
+            _quality.Configure(
+                Config.AnimationQuality,
+                AnimationHardwareProbe.TryGetVideoMemoryBytes(),
+                PluginAnimationFloor());
+            ApplyAnimationQuality();
+        }
+
+        /// <summary>动画皮肤插件声明的质量下限（宿主只会比它更高，不会更低）。</summary>
+        private AnimationProfile? PluginAnimationFloor()
+        {
+            return _plugins.PreferredAnimationQuality is PluginAnimationQuality quality
+                ? (AnimationProfile)(int)quality
+                : (AnimationProfile?)null;
+        }
+
+        /// <summary>档位变化：重写弹簧参数。自动降级时刻意不弹消息，只在岛上亮一颗小点。</summary>
+        private void OnAnimationQualityChanged(object? sender, EventArgs e) => ApplyAnimationQuality();
+
+        /// <summary>把当前档位落到每条弹簧通道（子步 / 缓动），并同步帧率与玻璃采样率。</summary>
+        private void ApplyAnimationQuality()
+        {
+            AnimationTuning tuning = AnimationQualityModes.Tuning(_quality.Level);
+            _tuning = tuning;
+
+            bool easeAll = tuning.EasedAll;
+            bool easeSecondary = easeAll || tuning.EaseSecondary;
+            double subStep = tuning.SubStepSeconds;
+
+            // 主形变（胶囊本体 / 详情面板）在平衡档仍保留弹簧，其余通道退化成缓动
+            _morphSpring.Eased = easeAll;
+            _detailSpring.Eased = easeAll;
+            _pluginSpring.Eased = easeSecondary;
+            _pluginSlideSpring.Eased = easeSecondary;
+            _messageSpring.Eased = easeSecondary;
+            _introSpring.Eased = easeSecondary;
+            _siriSpring.Eased = easeSecondary;
+
+            _morphSpring.SubStepSeconds = subStep;
+            _detailSpring.SubStepSeconds = subStep;
+            _messageSpring.SubStepSeconds = subStep;
+            _introSpring.SubStepSeconds = subStep;
+            _siriSpring.SubStepSeconds = subStep;
+            _pluginSpring.SubStepSeconds = subStep;
+            _pluginSlideSpring.SubStepSeconds = subStep;
+
+            // 弱 GPU 上停掉 Siri 光晕衰减这类纯装饰动画；回到高画质且透镜开着时再续上
+            if (tuning.AllowSiriGlow)
+            {
+                if (_siriTarget || _siriCollapsing)
+                {
+                    _siriGlowTimer?.Start();
+                }
+            }
+            else
+            {
+                _siriGlowTimer?.Stop();
+            }
+
+            UpdateQualityDot();
+
+            // 正在形变就按新档位重新起帧，保证下一次动画立刻用上新参数
+            if (IsLoaded && (_springRunning || !_morphSpring.IsSettled))
+            {
+                EnsureSpring();
+            }
+        }
+
+        /// <summary>自动档降到平衡 / 省电时亮一颗小圆点，其余情况隐藏。</summary>
+        private void UpdateQualityDot()
+        {
+            QualityDot.Visibility = _quality.AutoEnabled && _quality.IsDegraded
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        /// <summary>右键菜单：开始录制形变动画；录制中再次点击则结束并导出 Lottie。</summary>
+        private void OnExportMotionTrace(object sender, RoutedEventArgs e)
+        {
+            if (_motion.IsRecording)
+            {
+                FinishMotionTrace();
+                return;
+            }
+
+            _motion.Start();
+            EnqueueMessage(new NotificationItem
+            {
+                AppName = "Pynelith",
+                AppKey = "pynelith:motion",
+                Title = "开始录制形变动画",
+                Body = "拖动或展开胶囊，最多 8 秒；再次点右键菜单即可导出 Lottie。",
+                Accent = AccentPink,
+            });
+        }
+
+        private void OnMotionTraceCompleted(object? sender, EventArgs e) => FinishMotionTrace();
+
+        /// <summary>结束录制并写出 Lottie JSON（%APPDATA%\Pynelith\Motion）。</summary>
+        private void FinishMotionTrace()
+        {
+            IReadOnlyList<MotionFrame> frames = _motion.Stop();
+            if (frames.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                string directory = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "Pynelith",
+                    "Motion");
+
+                string path = MotionTrace.Export(
+                    frames,
+                    Math.Max(1, ActualWidth),
+                    Math.Max(1, ActualHeight),
+                    Math.Clamp(Config.AnimationFps, 30, 144),
+                    directory);
+
+                EnqueueMessage(new NotificationItem
+                {
+                    AppName = "Pynelith",
+                    AppKey = "pynelith:motion",
+                    Title = "已导出形变动画",
+                    Body = path,
+                    Accent = AccentPink,
+                });
+            }
+            catch (Exception ex)
+            {
+                EnqueueMessage(new NotificationItem
+                {
+                    AppName = "Pynelith",
+                    AppKey = "pynelith:motion",
+                    Title = "导出形变动画失败",
+                    Body = ex.Message,
+                    Accent = AccentPink,
+                });
+            }
+        }
+
+        #endregion
+
+        #region 插件面板（点击展开 / 滚轮切换）
+
+        /// <summary>插件列表变化（启用 / 禁用 / 导入 / 卸载）后重建卡片。</summary>
+        private void OnPluginsChanged(object? sender, EventArgs e)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.BeginInvoke(new Action(() => OnPluginsChanged(sender, e)));
+                return;
+            }
+
+            RefreshPluginCards();
+
+            // 动画皮肤可能刚被启用 / 禁用：质量下限跟着变
+            _quality.SetPluginFloor(PluginAnimationFloor());
+        }
+
+        /// <summary>滚轮切换：向下滚（Delta&lt;0）看下一个，向上滚看上一个。</summary>
+        private void OnIslandWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (!_pluginTarget || e.Delta == 0)
+            {
+                return;
+            }
+
+            SwitchPlugin(e.Delta > 0 ? -1 : 1);
+            e.Handled = true;
+        }
+
+        /// <summary>右键菜单：任意状态下开关插件面板（播放详情展开时也能进）。</summary>
+        private void OnOpenPluginPanel(object sender, RoutedEventArgs e) => TogglePluginPanel();
+
+        /// <summary>中键单击胶囊：任意状态下开关插件面板（与右键菜单同一条路径）。</summary>
+        private void OnIslandMiddleUp(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Middle)
+            {
+                return;
+            }
+
+            TogglePluginPanel();
+            e.Handled = true;
+        }
+
+        /// <summary>打开 / 收起插件面板；播放详情展开时先让位给插件面板。</summary>
+        private void TogglePluginPanel()
+        {
+            if (_replyActive || _siriTarget || _messageShowing)
+            {
+                return;
+            }
+
+            if (_pluginTarget)
+            {
+                SetPluginPanel(false);
+            }
+            else
+            {
+                SetDetail(false);
+                SetPluginPanel(true);
+            }
+
+            Reposition();
+        }
+
+        /// <summary>展开 / 收起插件面板。</summary>
+        private void SetPluginPanel(bool open)
+        {
+            if (open)
+            {
+                RefreshPluginCards();
+                if (_pluginCards.Count == 0)
+                {
+                    // 没装插件时保持原有「点击展开大时钟」行为
+                    open = false;
+                }
+                else
+                {
+                    _detail = false;
+                    _detailSpring.SetTarget(0);
+                    RenderFrontPluginCard();
+                }
+            }
+
+            if (_pluginTarget == open)
+            {
+                return;
+            }
+
+            _pluginTarget = open;
+            if (!open && _pluginSlideActive)
+            {
+                CommitPluginSlide();
+            }
+
+            if (EffectiveAnimationMs <= 0)
+            {
+                _pluginSpring.SnapTo(open ? 1 : 0);
+                ApplyMorph(_morphSpring.Value);
+                return;
+            }
+
+            EnsureSpring();
+        }
+
+        /// <summary>重建插件卡片列表（坏清单也展示，便于在岛上看到失败原因）。</summary>
+        private void RefreshPluginCards()
+        {
+            _pluginCards.Clear();
+            foreach (PluginDescriptor descriptor in _plugins.Plugins)
+            {
+                if (!string.IsNullOrWhiteSpace(descriptor.Manifest.Id))
+                {
+                    _pluginCards.Add(descriptor);
+                }
+            }
+
+            if (_pluginCards.Count == 0)
+            {
+                _pluginIndex = 0;
+            }
+            else if (_pluginIndex >= _pluginCards.Count)
+            {
+                _pluginIndex = 0;
+            }
+
+            if (_pluginTarget)
+            {
+                RenderFrontPluginCard();
+            }
+        }
+
+        /// <summary>滚轮 / 方向键切换：旧卡左出、新卡右入（或反向）。</summary>
+        private void SwitchPlugin(int delta)
+        {
+            if (_pluginCards.Count <= 1 || _pluginSlideActive)
+            {
+                return;
+            }
+
+            int next = (_pluginIndex + delta) % _pluginCards.Count;
+            if (next < 0)
+            {
+                next += _pluginCards.Count;
+            }
+
+            _pluginSlideDirection = delta >= 0 ? 1 : -1;
+            _pluginIncomingIndex = next;
+
+            RenderPluginCard(
+                _pluginCards[next],
+                PluginIncomingName,
+                PluginIncomingBadge,
+                PluginIncomingKind,
+                PluginIncomingMetrics,
+                PluginIncomingDots,
+                next);
+
+            PluginCardIncoming.Visibility = Visibility.Visible;
+            PluginCardIncoming.Opacity = 0;
+            PluginIncomingShift.X = _pluginSlideDirection * PluginSlideDistance;
+            PluginFrontShift.X = 0;
+            PluginCardFront.Opacity = 1;
+
+            _pluginSlideSpring.SnapTo(0);
+            _pluginSlideActive = true;
+            EnsureSpring();
+        }
+
+        /// <summary>滑动结束：把新卡内容提交到常驻卡片，复位两张卡的位移。</summary>
+        private void CommitPluginSlide()
+        {
+            if (!_pluginSlideActive)
+            {
+                PluginFrontShift.X = 0;
+                PluginCardFront.Opacity = 1;
+                return;
+            }
+
+            _pluginIndex = _pluginIncomingIndex;
+            _pluginSlideActive = false;
+
+            PluginCardIncoming.Visibility = Visibility.Collapsed;
+            PluginCardIncoming.Opacity = 0;
+            PluginIncomingShift.X = 0;
+            PluginFrontShift.X = 0;
+            PluginCardFront.Opacity = 1;
+
+            RenderFrontPluginCard();
+        }
+
+        /// <summary>逐帧更新两张卡片的位移与透明度（由 ApplyMorph 每帧调用）。</summary>
+        private void ApplyPluginSlideVisual()
+        {
+            if (!_pluginSlideActive)
+            {
+                PluginFrontShift.X = 0;
+                PluginCardFront.Opacity = 1;
+                return;
+            }
+
+            double p = Math.Clamp(_pluginSlideSpring.Value, 0, 1);
+            double direction = _pluginSlideDirection;
+
+            PluginFrontShift.X = -direction * PluginSlideDistance * p;
+            PluginCardFront.Opacity = 1 - p;
+
+            PluginIncomingShift.X = direction * PluginSlideDistance * (1 - p);
+            PluginCardIncoming.Opacity = p;
+        }
+
+        private void RenderFrontPluginCard()
+        {
+            if (_pluginCards.Count == 0)
+            {
+                return;
+            }
+
+            _pluginIndex = Math.Clamp(_pluginIndex, 0, _pluginCards.Count - 1);
+            RenderPluginCard(
+                _pluginCards[_pluginIndex],
+                PluginFrontName,
+                PluginFrontBadge,
+                PluginFrontKind,
+                PluginFrontMetrics,
+                PluginFrontDots,
+                _pluginIndex);
+        }
+
+        private void RenderPluginCard(
+            PluginDescriptor descriptor,
+            TextBlock name,
+            Border badge,
+            TextBlock kind,
+            StackPanel metrics,
+            StackPanel dots,
+            int index)
+        {
+            name.Text = string.IsNullOrWhiteSpace(descriptor.Manifest.Name)
+                ? descriptor.Manifest.Id
+                : descriptor.Manifest.Name;
+            kind.Text = PluginKindLabel(descriptor.Manifest.Kind);
+            badge.Visibility = Visibility.Visible;
+
+            metrics.Children.Clear();
+            if (descriptor.State == PluginState.Failed || descriptor.State == PluginState.Invalid)
+            {
+                badge.Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0x6B, 0x6B));
+                AddPluginMetricLine(metrics, "加载失败：" + descriptor.Error, "#FFFF8A8A");
+            }
+            else
+            {
+                badge.Background = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
+
+                IReadOnlyList<PluginMetric> list = GetPluginMetrics(descriptor);
+                if (list.Count == 0)
+                {
+                    string hint = string.IsNullOrWhiteSpace(descriptor.Manifest.Description)
+                        ? "已就绪"
+                        : descriptor.Manifest.Description;
+                    AddPluginMetricLine(metrics, hint, "#A6FFFFFF");
+                }
+                else
+                {
+                    for (int i = 0; i < list.Count && i < 3; i++)
+                    {
+                        AddPluginMetricLine(metrics, list[i].ToDisplayText(), "#F5FFFFFF");
+                    }
+                }
+            }
+
+            RenderPluginDots(dots, index);
+        }
+
+        private IReadOnlyList<PluginMetric> GetPluginMetrics(PluginDescriptor descriptor)
+        {
+            string id = descriptor.Manifest.Id;
+            if (_pluginMetrics.TryGetValue(id, out IReadOnlyList<PluginMetric>? cached))
+            {
+                return cached;
+            }
+
+            IReadOnlyList<PluginMetric> live = _plugins.GetMetrics(id);
+            if (live.Count > 0)
+            {
+                _pluginMetrics[id] = live;
+            }
+
+            return live;
+        }
+
+        private static void AddPluginMetricLine(StackPanel host, string text, string color)
+        {
+            host.Children.Add(new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                Margin = new Thickness(0, 0, 0, 2),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color)),
+            });
+        }
+
+        private void RenderPluginDots(StackPanel host, int active)
+        {
+            host.Children.Clear();
+            for (int i = 0; i < _pluginCards.Count; i++)
+            {
+                bool on = i == active;
+                host.Children.Add(new System.Windows.Shapes.Ellipse
+                {
+                    Width = on ? 6 : 4,
+                    Height = on ? 6 : 4,
+                    Margin = new Thickness(0, 0, 4, 0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Fill = new SolidColorBrush(on
+                        ? Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF)
+                        : Color.FromArgb(0x4D, 0xFF, 0xFF, 0xFF)),
+                });
+            }
+        }
+
+        private static string PluginKindLabel(PluginKind kind)
+        {
+            return kind switch
+            {
+                PluginKind.NotificationSource => "通知源",
+                PluginKind.MonitorSource => "监控源",
+                PluginKind.AiBackend => "AI 后端",
+                PluginKind.Skin => "皮肤",
+                _ => "插件",
+            };
+        }
+
+        #endregion
+
+        #region 交互通知（MCP ask：带输入框，回车发送）
+
+        /// <summary>
+        /// 供插件（如 MCP 桥）向用户提问：弹出原生通知样式，并附带回复输入栏。
+        /// 返回用户输入；超时 / Esc / 取消 / 直接收起面板时返回 null。
+        /// </summary>
+        private Task<string?> AskUserAsync(string title, string body, int timeoutSeconds, CancellationToken cancellationToken)
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                return Dispatcher
+                    .InvokeAsync(() => AskUserAsync(title, body, timeoutSeconds, cancellationToken))
+                    .Task
+                    .Unwrap();
+            }
+
+            if (_replyActive)
+            {
+                // 已有待回复的交互通知：不排队，直接告诉调用方暂不可用
+                return Task.FromResult<string?>(null);
+            }
+
+            return ShowInteractivePromptAsync(title, body, timeoutSeconds, cancellationToken);
+        }
+
+        private Task<string?> ShowInteractivePromptAsync(
+            string title,
+            string body,
+            int timeoutSeconds,
+            CancellationToken cancellationToken)
+        {
+            _messageQueue.Clear();
+            _messageHoldTimer.Stop();
+            if (_siriTarget)
+            {
+                CollapseSiri();
+            }
+
+            SetPluginPanel(false);
+
+            _replyActive = true;
+            _replyCompletion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            _messageShowing = true;
+            _messageTargetOn = true;
+            _detail = false;
+            _currentNotification = null;
+
+            MessageApp.Text = string.IsNullOrWhiteSpace(title) ? "MCP 插件" : title;
+            MessageBody.Text = NormalizeMessage(body);
+            ReplyInput.Text = string.Empty;
+            ReplyBar.Visibility = Visibility.Visible;
+
+            ApplyMessageLayout();
+            ApplyWindowSize();
+            if (!_dragging)
+            {
+                Reposition();
+            }
+
+            AnimateMessage(true);
+
+            int seconds = timeoutSeconds > 0 ? timeoutSeconds : 300;
+            _replyTimeoutTimer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                Interval = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 3600)),
+            };
+            _replyTimeoutTimer.Tick += (_, _) => FinishReply(null);
+            _replyTimeoutTimer.Start();
+
+            if (cancellationToken.CanBeCanceled)
+            {
+                _replyCancel = cancellationToken.Register(
+                    () => Dispatcher.BeginInvoke(new Action(() => FinishReply(null))));
+            }
+
+            // 输入框必须拿到键盘焦点，否则回车不会触发发送
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_replyActive)
+                {
+                    return;
+                }
+
+                ReplyInput.Focus();
+                Keyboard.Focus(ReplyInput);
+            }), DispatcherPriority.Input);
+
+            return _replyCompletion.Task;
+        }
+
+        /// <summary>结束等待中的回复：完成 Task、隐藏输入栏并收起通知面板。</summary>
+        private void FinishReply(string? text)
+        {
+            if (!_replyActive)
+            {
+                return;
+            }
+
+            _replyActive = false;
+
+            _replyTimeoutTimer?.Stop();
+            _replyTimeoutTimer = null;
+            _replyCancel.Dispose();
+            _replyCancel = default;
+            ReplyBar.Visibility = Visibility.Collapsed;
+
+            TaskCompletionSource<string?>? completion = _replyCompletion;
+            _replyCompletion = null;
+            completion?.TrySetResult(text);
+
+            _messageQueue.Clear();
+            _messageHoldTimer.Stop();
+            if (_messageShowing)
+            {
+                AnimateMessage(false);
+            }
+        }
+
+        private void SubmitReply()
+        {
+            if (!_replyActive)
+            {
+                return;
+            }
+
+            FinishReply((ReplyInput.Text ?? string.Empty).Trim());
+        }
+
+        private void OnReplyKeyDown(object sender, KeyEventArgs e)
+        {
+            if (!_replyActive || e.Key != Key.Enter)
+            {
+                return;
+            }
+
+            // Shift+Enter 换行；单独 Enter 发送
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            SubmitReply();
+        }
+
+        private void OnReplySend(object sender, RoutedEventArgs e) => SubmitReply();
+
+        /// <summary>点击是否落在回复栏内部（避免点输入框时把交互通知收起）。</summary>
+        private bool IsInsideReplyBar(DependencyObject? source)
+        {
+            DependencyObject? node = source;
+            int guard = 0;
+            while (node != null && guard++ < 256)
+            {
+                if (ReferenceEquals(node, ReplyBar))
+                {
+                    return true;
+                }
+
+                node = ParentOf(node);
+            }
+
+            return false;
+        }
+
+        #endregion
 
         /**
          * 监控文本固定宽度（等宽字体），数值变化不会改变胶囊宽度；
@@ -1501,6 +2239,7 @@ namespace Pynelith.Island.Views
 
             _messageShowing = true;
             _detail = false; // 消息结束后回到默认紧凑形态
+            SetPluginPanel(false);
 
             // 面板互斥：消息面板展开时收起 Siri 透镜
             if (_siriTarget)
@@ -1533,6 +2272,12 @@ namespace Pynelith.Island.Views
         {
             _messageHoldTimer.Stop();
 
+            // 交互通知（MCP ask）要等用户回复，不自动收起
+            if (_replyActive)
+            {
+                return;
+            }
+
             if (_messageQueue.Count > 0)
             {
                 StartNextMessage();
@@ -1545,6 +2290,13 @@ namespace Pynelith.Island.Views
         /// <summary>点击消息或需要强制收起时：清空排队消息并平滑收回。</summary>
         private void DismissMessages()
         {
+            // 等待中的插件调用以 null 结束，避免 MCP 请求永远挂起
+            if (_replyActive)
+            {
+                FinishReply(null);
+                return;
+            }
+
             _messageQueue.Clear();
             _messageHoldTimer.Stop();
             AnimateMessage(false);
@@ -1581,6 +2333,7 @@ namespace Pynelith.Island.Views
 
             MessageApp.Text = string.Empty;
             MessageBody.Text = string.Empty;
+            ReplyBar.Visibility = Visibility.Collapsed;
             _currentNotification = null;
 
             ApplyWindowSize();
@@ -1612,6 +2365,14 @@ namespace Pynelith.Island.Views
             // 固定 chrome：应用名行高 + 间距 + 上下内边距
             double chrome = 18 + 4 + 24;
 
+            // 交互通知额外占一层输入栏（含间距）
+            double replyExtra = 0;
+            if (_replyActive)
+            {
+                ReplyBar.Measure(new Size(bodyWidth, double.PositiveInfinity));
+                replyExtra = Math.Ceiling(ReplyBar.DesiredSize.Height) + 8;
+            }
+
             double fontSize = 12.5;
             double bodyHeight;
 
@@ -1622,7 +2383,7 @@ namespace Pynelith.Island.Views
                 MessageBody.Measure(new Size(bodyWidth, double.PositiveInfinity));
                 bodyHeight = MessageBody.DesiredSize.Height;
 
-                if (chrome + bodyHeight <= maxPreHeight || fontSize <= 8.0)
+                if (chrome + replyExtra + bodyHeight <= maxPreHeight || fontSize <= 8.0)
                 {
                     break;
                 }
@@ -1631,11 +2392,11 @@ namespace Pynelith.Island.Views
             }
 
             // 极端超长消息的兜底：限制可视高度，超出部分通过滚动条查看，绝不让文字溢出胶囊
-            double bodyArea = Math.Max(40, maxPreHeight - chrome);
+            double bodyArea = Math.Max(40, maxPreHeight - chrome - replyExtra);
             double visibleHeight = Math.Min(bodyHeight, bodyArea);
             MessageScroll.Height = visibleHeight;
 
-            double preHeight = Math.Clamp(chrome + visibleHeight, 64, maxPreHeight);
+            double preHeight = Math.Clamp(chrome + replyExtra + visibleHeight, 64, maxPreHeight);
             NotificationLayer.Width = preWidth;
             NotificationLayer.Height = preHeight;
 
@@ -1825,6 +2586,16 @@ namespace Pynelith.Island.Views
                 height += (siriHeight - height) * siri;
             }
 
+            // 插件面板：点击待机胶囊展开，滚轮左右切换插件卡片
+            double plugin = Math.Clamp(_pluginSpring.Value, 0, 1.06);
+            if (plugin > 0.0001)
+            {
+                double pluginWidth = PluginPanelWidth * scale;
+                double pluginHeight = PluginPanelHeight * scale;
+                width += (pluginWidth - width) * plugin;
+                height += (pluginHeight - height) * plugin;
+            }
+
             CapsuleHost.Width = width;
             CapsuleHost.Height = height;
 
@@ -1838,6 +2609,17 @@ namespace Pynelith.Island.Views
             _capsuleClip.Rect = new Rect(0, 0, width, height);
             _capsuleClip.RadiusX = radius;
             _capsuleClip.RadiusY = radius;
+
+            // 形变录制：把这一帧的位置 / 尺寸 / 圆角直接记下来（位置按胶囊水平居中换算）
+            if (_motion.IsRecording)
+            {
+                _motion.Capture(
+                    Math.Max(0, (ActualWidth - width) * 0.5),
+                    0,
+                    width,
+                    height,
+                    radius);
+            }
 
             // 纯黑 / 磨砂用真正的圆角 Border 绘制底色，描边会沿弧线走，
             // 比"矩形填充 + 父级裁剪"边缘更干净、更接近灵动岛的胶囊感。
@@ -1889,6 +2671,13 @@ namespace Pynelith.Island.Views
                 baseAlpha *= 1 - siriAlpha;
             }
 
+            // 插件面板接管：原有内容淡出；消息 / Siri 优先级更高
+            double pluginAlpha = Math.Clamp(plugin * 1.25, 0, 1) * (1 - siriAlpha) * (1 - notificationAlpha);
+            if (pluginAlpha > 0.001)
+            {
+                baseAlpha *= 1 - pluginAlpha;
+            }
+
             idleAlpha *= baseAlpha;
             idleDetailAlpha *= baseAlpha;
             compactAlpha *= baseAlpha;
@@ -1897,6 +2686,11 @@ namespace Pynelith.Island.Views
             NotificationLayer.Opacity = notificationAlpha * (1 - siriAlpha);
             // 消息展示期间接收点击：点一下即收起（不再"点了没反应"）
             NotificationLayer.IsHitTestVisible = notificationAlpha > 0.5 && siriAlpha < 0.5;
+
+            // 插件面板：随展开度淡入，命中测试只在中段以后打开
+            PluginLayer.Opacity = pluginAlpha;
+            PluginLayer.Visibility = pluginAlpha > 0.001 ? Visibility.Visible : Visibility.Collapsed;
+            PluginLayer.IsHitTestVisible = pluginAlpha > 0.6;
 
             // Siri 透镜：随展开度淡入并从中心"长出来"
             SiriLensHost.Opacity = siriAlpha;
@@ -1930,12 +2724,15 @@ namespace Pynelith.Island.Views
             PlaybackControls.IsHitTestVisible = controlsAlpha > 0.5;
 
             ApplyGlassShape(width, height);
+
+            // 插件卡片左右滑动的位移 / 透明随滑动弹簧逐帧刷新
+            ApplyPluginSlideVisual();
         }
 
         /// <summary>
         /// 把圆角、折射带、染色推给渲染模块。
-        /// 阈值 2.5 DIP：动画期间把玻璃重绘次数从「每帧」降到约 1/4，
-        /// 玻璃是背景模糊，2.5 DIP 内的形状差异肉眼不可见，但省下大量抓屏开销。
+        /// 每帧都推：着色器背景是 1:1 未模糊的桌面像素，形状落后于胶囊就会显现阶梯式跳动。
+        /// 2.5 DIP 的变化阈值只用来挡掉静止或极慢移动时的无意义重绘。
         /// </summary>
         private void ApplyGlassShape(double width, double height)
         {
@@ -1945,15 +2742,11 @@ namespace Pynelith.Island.Views
                 return;
             }
 
-            // 动画期间每 5 帧才真正刷新玻璃：一次刷新包含抓屏 + 像素处理 + 位图上传，
-            // 是逐帧动画里最重的一步。降到约 12Hz 后，慢帧（>16.7ms）数量显著下降，
-            // 而玻璃是背景模糊、形状差异在 2.5 DIP 内不可见，观感无损失。
-            // 配置参数（染色浓度、圆角）变化时跳过节流，立即重推一次。
+            // 玻璃形状必须逐帧跟随胶囊：着色器里的背景是 1:1 的真实桌面像素（不做模糊），
+            // 只要形状比背景早几帧更新，边缘就会以低帧率阶梯式跳动，看起来就是"玻璃卡"。
+            // 因此这里不再做帧节流，只用下面的变化阈值挡掉肉眼不可见的微小抖动。
+            // 配置参数（染色浓度、圆角）变化时强制重推一次。
             bool force = _glassDirty;
-            if (!force && _springRunning && (++_glassFrameSkip % 5) != 0)
-            {
-                return;
-            }
 
             double shortSide = Math.Min(width, height);
             double radius = Math.Min(Config.CornerRadius * Config.GlobalScale, shortSide * 0.5);
@@ -2046,17 +2839,25 @@ namespace Pynelith.Island.Views
             _lastFrameTicks = Stopwatch.GetTimestamp();
             _springStartTicks = _lastFrameTicks;
 
-            // 动画帧率由设置决定（60 / 30），低配机降帧可显著减少 CPU 与抓屏开销
-            int fps = Math.Max(15, Config.AnimationFps);
-            _springTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / fps);
-
             if (!_springRunning)
             {
                 _springRunning = true;
-                _springTimer.Start();
 
-                // 形变期间提高玻璃采样帧率，静止时由 StopSpring 降回去
-                _glass?.SetFrameRate(Math.Min(24, fps));
+                // CompositionTarget.Rendering 与显示器刷新同步：120Hz 屏即 120fps。
+                // 设置里的 AnimationFps 作为上限（30 / 60 / 120），逐帧按累积时间跳帧。
+                CompositionTarget.Rendering += OnRenderingFrame;
+
+                // 形变期间玻璃采样必须跟上传帧率：玻璃里的背景是 1:1 未模糊的真实桌面像素，
+                // 采样率低于帧率时形状每帧在动、背景却每隔几帧跳一次，肉眼就是"背景在抖/玻璃发卡"。
+                // 固定 24fps 只适合静止或慢速移动，形变期间提升到显示刷新率（最高 60）。
+                _glass?.SetFrameRate(Math.Clamp(Config.AnimationFps, 30, 60));
+
+                // 形变期间玻璃改走低分辨率缓存：WPF 分层窗口是软件光栅化，
+                // 逐帧按全分辨率跑像素着色器是卡顿主因，缓存后逐帧着色面积降到约三分之一。
+                _glass?.SetFastMode(true);
+
+                // Rendering 只在有画面需要合成时触发；主动失效一次，保证动画第一帧必定到来
+                InvalidateVisual();
             }
         }
 
@@ -2068,19 +2869,29 @@ namespace Pynelith.Island.Views
             }
 
             _springRunning = false;
-            _springTimer.Stop();
+            CompositionTarget.Rendering -= OnRenderingFrame;
             _glass?.SetFrameRate(10);
+
+            // 动画结束后恢复全分辨率玻璃，静止画面重新变得锐利
+            _glass?.SetFastMode(false);
 
             // 让动画结束后的下一次 ApplyMorph 一定把最终形状推给玻璃层
             _lastGlassWidth = -1;
             _lastGlassHeight = -1;
-            _glassFrameSkip = 0;
         }
 
-        private void OnSpringTimerTick(object? sender, EventArgs e)
+        private void OnRenderingFrame(object? sender, EventArgs e)
         {
             long now = Stopwatch.GetTimestamp();
             double dt = (now - _lastFrameTicks) / (double)Stopwatch.Frequency;
+
+            // 帧率上限：配置值再叠加档位上限（省电档最高 30fps）
+            int cap = Math.Clamp(Math.Min(Config.AnimationFps, _tuning.MaxFps), 15, 144);
+            if (dt < 1.0 / cap - 0.0005)
+            {
+                return;
+            }
+
             _lastFrameTicks = now;
 
             // 帧步长钳制：休眠恢复/帧率抖动不会产生位置突跳
@@ -2090,6 +2901,9 @@ namespace Pynelith.Island.Views
                 return;
             }
 
+            // 自动档依据真实帧耗时逐级降级 / 回弹
+            _quality.ReportFrame(dt, 1.0 / cap);
+
             // 响应时长由配置动画时长决定；阻尼比按通道区分，保证层级手感一致
             double response = Math.Max(MinResponse, EffectiveAnimationMs / 1000.0 * 0.5);
             _morphSpring.Configure(response, SpringZeta);
@@ -2097,19 +2911,33 @@ namespace Pynelith.Island.Views
             _messageSpring.Configure(response, MessageZeta);
             _introSpring.Configure(response, SpringZeta);
             _siriSpring.Configure(response, SiriZeta);
+            _pluginSpring.Configure(response, 0.94);
 
             _detailSpring.SetTarget(_detail ? 1 : 0);
             _messageSpring.SetTarget(_messageTargetOn ? 1 : 0);
             _introSpring.SetTarget(_introSizeTarget ? 1 : 0);
             _siriSpring.SetTarget(_siriTarget ? 1 : 0);
+            _pluginSpring.SetTarget(_pluginTarget ? 1 : 0);
 
-            // 每条通道内部按 ≤8ms 子步积分：帧长可能达到 50ms（玻璃抓屏较重），
-            // 单步欧拉在 ω·dt 接近 2 时会振荡甚至发散，表现为抖动且永不收敛。
+            // 卡片左右滑动：固定较短响应，滚动切换干脆利落
+            _pluginSlideSpring.Configure(0.22, 0.86);
+            _pluginSlideSpring.SetTarget(_pluginSlideActive ? 1 : 0);
+
+            // 每条通道内部按档位子步（8ms / 16ms）积分，省电档则走指数缓动：
+            // 帧长可能达到 50ms（玻璃抓屏较重），单步欧拉在 ω·dt 接近 2 时会振荡甚至发散，
+            // 表现为抖动且永不收敛。
             bool settled = _morphSpring.Advance(dt);
             settled &= _detailSpring.Advance(dt);
             settled &= _messageSpring.Advance(dt);
             settled &= _introSpring.Advance(dt);
             settled &= _siriSpring.Advance(dt);
+            settled &= _pluginSpring.Advance(dt);
+            bool slideSettled = _pluginSlideSpring.Advance(dt);
+
+            if (slideSettled && _pluginSlideActive)
+            {
+                CommitPluginSlide();
+            }
 
             // 超时兜底：极端负载下也不允许动画无限挂起，否则 Rendering 会持续占满 UI 线程
             bool timedOut = Stopwatch.GetElapsedTime(_springStartTicks) > TimeSpan.FromSeconds(2);
@@ -2121,6 +2949,8 @@ namespace Pynelith.Island.Views
                 _messageSpring.SnapTo(_messageSpring.Target);
                 _introSpring.SnapTo(_introSpring.Target);
                 _siriSpring.SnapTo(_siriSpring.Target);
+                _pluginSpring.SnapTo(_pluginSpring.Target);
+                CommitPluginSlide();
                 StopSpring();
                 ApplyMorph(_morphSpring.Value);
 
@@ -2146,6 +2976,12 @@ namespace Pynelith.Island.Views
             }
 
             _mediaMode = media;
+
+            // 进入媒体态时收起插件面板（媒体详情优先）
+            if (media)
+            {
+                SetPluginPanel(false);
+            }
 
             // 不在这里重置 _detail：用户点击展开后必须保持展开，
             // 只有用户再次点击、或消息展示结束时才收起。
@@ -2825,6 +3661,24 @@ namespace Pynelith.Island.Views
         /// </summary>
         private void OnIslandKeyDown(object sender, KeyEventArgs e)
         {
+            // 插件面板展开时：Esc 收起，←/→ 切换插件
+            if (_pluginTarget)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    SetPluginPanel(false);
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.Key == Key.Left || e.Key == Key.Right)
+                {
+                    SwitchPlugin(e.Key == Key.Right ? 1 : -1);
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             // Siri 透镜展开时优先响应 Esc / 空格（停止生成）
             if (_siriTarget)
             {
@@ -3208,6 +4062,14 @@ namespace Pynelith.Island.Views
 
         private void OnIslandMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            // 交互通知的输入栏 / 发送键不参与「点一下收起消息」，否则点输入框就会取消提问
+            if (_replyActive && IsInsideReplyBar(e.OriginalSource as DependencyObject))
+            {
+                _pressActive = false;
+                _dragging = false;
+                return;
+            }
+
             bool isClick = _pressActive && !_dragging;
             _pressActive = false;
             _dragging = false;
@@ -3229,6 +4091,19 @@ namespace Pynelith.Island.Views
                 {
                     // 点击胶囊右端的 Siri 光点：展开透镜并开始收音
                     TriggerSiriVoice();
+                }
+                else if (_pluginTarget)
+                {
+                    // 插件面板已展开：再点一下收起
+                    SetPluginPanel(false);
+                    Reposition();
+                }
+                else if (!_mediaMode && _pluginCards.Count > 0)
+                {
+                    // 待机态点击：展开插件面板（滚轮左右切换插件）
+                    SetDetail(false);
+                    SetPluginPanel(true);
+                    Reposition();
                 }
                 else
                 {
@@ -3395,6 +4270,11 @@ namespace Pynelith.Island.Views
             _history.Dispose();
 
             // 插件：先解绑事件再卸载，避免卸载过程中的回调打到已关闭的窗口
+            StopSpring();
+            FinishReply(null);
+            CapsuleHost.PreviewMouseWheel -= OnIslandWheel;
+            CapsuleHost.MouseUp -= OnIslandMiddleUp;
+            _plugins.Changed -= OnPluginsChanged;
             _plugins.NotificationReceived -= OnPluginNotification;
             _plugins.MetricsUpdated -= OnPluginMetricsUpdated;
             _plugins.Dispose();

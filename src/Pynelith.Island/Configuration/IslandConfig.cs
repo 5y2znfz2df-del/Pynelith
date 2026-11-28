@@ -11,6 +11,10 @@ namespace Pynelith.Island.Configuration
     /// </summary>
     public sealed class IslandConfig : INotifyPropertyChanged
     {
+        /// <summary>官方插件市场：清单随 GitHub Release 发布，地址固定，第三方也可自建。</summary>
+        public const string DefaultPluginCatalogUrl =
+            "https://github.com/5y2znfz2df-del/Pynelith/releases/download/plugins/plugin-index.json";
+
         private double _globalScale = 1.0;
         private double _collapsedWidth = 180;
         private double _collapsedHeight = 36;
@@ -38,11 +42,13 @@ namespace Pynelith.Island.Configuration
         private int _monitorIndex = -1;
         private bool _followSystemTheme = true;
         private bool _hideInFullscreen = true;
-        private int _animationFps = 60;
+        // 默认跟随显示器刷新：60Hz 屏跑 60fps，120Hz 屏跑 120fps
+        private int _animationFps = 120;
+        private string _animationQuality = AnimationQualityModes.Auto;
         private bool _hoverExpand = true;
         private bool _visibilityHotkeyEnabled = true;
         private string _visibilityHotkey = "Ctrl+Alt+H";
-        private string _pluginCatalogUrl = string.Empty;
+        private string _pluginCatalogUrl = DefaultPluginCatalogUrl;
         private bool _showClipboardHistory = true;
         private bool _showCodeTimer = true;
         private int _clipboardHistoryLimit = 20;
@@ -255,11 +261,21 @@ namespace Pynelith.Island.Configuration
             set => Set(ref _hideInFullscreen, value);
         }
 
-        /// <summary>动画帧率：60 / 30 / 0（0 = 关闭动画，形变直接落位）。</summary>
+        /// <summary>动画帧率上限：120 / 60 / 30 / 0（0 = 关闭动画，形变直接落位）。实际帧率不超过显示器刷新率。</summary>
         public int AnimationFps
         {
             get => _animationFps;
             set => Set(ref _animationFps, value <= 0 ? 0 : Math.Clamp(value, 15, 144));
+        }
+
+        /// <summary>
+        /// 动画档位：Auto（自动）/ Quality（极致质感）/ Balanced（平衡）/ Eco（省电）。
+        /// 「自动」按显存容量与实时帧耗时调整；固定档位完全听用户的。
+        /// </summary>
+        public string AnimationQuality
+        {
+            get => _animationQuality;
+            set => Set(ref _animationQuality, AnimationQualityModes.Normalize(value));
         }
 
         /// <summary>鼠标悬停时自动展开详情（无需点击）。</summary>
@@ -284,7 +300,7 @@ namespace Pynelith.Island.Configuration
         }
 
         /// <summary>
-        /// 插件市场清单地址（plugin-index.json）。为空时只显示本地缓存。
+        /// 插件市场清单地址（plugin-index.json）。留空或删除后自动回到官方市场；
         /// 第三方可自建索引，实现"插件清单托管"。
         /// </summary>
         public string PluginCatalogUrl
@@ -346,6 +362,7 @@ namespace Pynelith.Island.Configuration
             FollowSystemTheme = defaults.FollowSystemTheme;
             HideInFullscreen = defaults.HideInFullscreen;
             AnimationFps = defaults.AnimationFps;
+            AnimationQuality = defaults.AnimationQuality;
             HoverExpand = defaults.HoverExpand;
             VisibilityHotkeyEnabled = defaults.VisibilityHotkeyEnabled;
             VisibilityHotkey = defaults.VisibilityHotkey;

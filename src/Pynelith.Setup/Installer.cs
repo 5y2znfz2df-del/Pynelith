@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -14,7 +14,7 @@ namespace Pynelith.Setup
     internal static class Installer
     {
         internal const string ProductName = "Pynelith";
-        internal const string VersionText = "beta0.3.1";
+        internal const string VersionText = "beta0.4.1";
         internal const string AppExeName = "Pynelith.Island.exe";
         internal const string UninstallExeName = "uninstall.exe";
         // 载荷是压缩后的 zip（内含 Pynelith.Island.exe），把安装包从 ~150MB 压到 10MB 以内

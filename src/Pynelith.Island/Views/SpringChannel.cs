@@ -11,11 +11,11 @@ namespace Pynelith.Island.Views
     /// </summary>
     public sealed class SpringChannel
     {
-        /// <summary>单次积分最大子步（秒）。</summary>
-        private const double MaxSubStep = 0.008;
+        /// <summary>默认单次积分最大子步（秒）。</summary>
+        private const double DefaultSubStepSeconds = 0.008;
 
-        /// <summary>子步上限：再长的帧也最多拆成 8 步，避免 UI 线程被拖住。</summary>
-        private const int MaxSubSteps = 8;
+        /// <summary>默认子步数量上限。</summary>
+        private const int DefaultSubStepLimit = 8;
 
         /// <summary>收敛阈值（位置）。</summary>
         private const double SettlePosition = 0.0015;
@@ -37,6 +37,18 @@ namespace Pynelith.Island.Views
 
         /// <summary>阻尼比：1 = 临界阻尼（不过冲），小于 1 = 带回弹。</summary>
         public double Zeta = 0.92;
+
+        /// <summary>积分子步（秒）。动画档位会改成 8ms / 16ms。</summary>
+        public double SubStepSeconds = DefaultSubStepSeconds;
+
+        /// <summary>单帧最多拆多少个子步。</summary>
+        public int SubStepLimit = DefaultSubStepLimit;
+
+        /// <summary>
+        /// 缓动模式：不积分弹簧，直接按指数曲线逼近目标（省电 / 弱 GPU 档）。
+        /// 没有回弹、没有速度累积，CPU 开销只有一次乘法，但保留与弹簧接近的时长手感。
+        /// </summary>
+        public bool Eased;
 
         /// <summary>配置响应时长与阻尼比。</summary>
         public void Configure(double response, double zeta)
@@ -74,11 +86,17 @@ namespace Pynelith.Island.Views
                     dt = MaxStepSeconds;
                 }
 
+                if (Eased)
+                {
+                    AdvanceEased(dt);
+                    return IsSettled;
+                }
+
                 double omega = 2 * Math.PI / Response;
                 double k = omega * omega;
                 double c = 2 * Zeta * omega;
 
-                int steps = Math.Min(MaxSubSteps, Math.Max(1, (int)Math.Ceiling(dt / MaxSubStep)));
+                int steps = Math.Min(SubStepLimit, Math.Max(1, (int)Math.Ceiling(dt / SubStepSeconds)));
                 double h = dt / steps;
 
                 for (int i = 0; i < steps; i++)
@@ -90,6 +108,25 @@ namespace Pynelith.Island.Views
             }
 
             return IsSettled;
+        }
+
+        /// <summary>
+        /// 指数缓动推进：一步到位，不需要拆分。
+        /// 时间常数取响应时长的一半左右，肉眼看与弹簧的收尾速度接近，但没有过冲。
+        /// </summary>
+        private void AdvanceEased(double dt)
+        {
+            double tau = Math.Max(0.02, Response * 0.55);
+            double alpha = 1 - Math.Exp(-dt / tau);
+            double delta = Target - Value;
+            Value += delta * alpha;
+            Velocity = delta * alpha / dt;
+
+            if (Math.Abs(Target - Value) < SettlePosition)
+            {
+                Value = Target;
+                Velocity = 0;
+            }
         }
 
         /// <summary>是否已收敛：位置与速度都足够接近目标。</summary>

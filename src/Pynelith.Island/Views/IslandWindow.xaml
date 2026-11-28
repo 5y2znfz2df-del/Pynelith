@@ -266,7 +266,9 @@
                     <MenuItem Header="歌词延后 200ms" Click="OnLyricLater"/>
                     <MenuItem Header="歌词偏移归零" Click="OnLyricOffsetReset"/>
                     <Separator/>
+                    <MenuItem Header="插件面板" Click="OnOpenPluginPanel"/>
                     <MenuItem Header="工具面板" Click="OnOpenToolsPanel"/>
+                    <MenuItem Header="导出形变动画（Lottie）" Click="OnExportMotionTrace"/>
                     <MenuItem Header="设置" Click="OnOpenSettings"/>
                     <MenuItem Header="退出 Pynelith" Click="OnExit"/>
                 </ContextMenu>
@@ -436,6 +438,15 @@
                                 </Ellipse.Fill>
                             </Ellipse>
                         </Grid>
+
+                        <!-- 动画降级提示：自动档降到平衡 / 省电时，在右端点一颗小圆点。
+                             不占位、不闪动、不参与命中测试，纯粹让用户知道「现在不是最强画质」。 -->
+                        <Ellipse x:Name="QualityDot"
+                                 Width="5" Height="5" Margin="8,0,0,0"
+                                 Fill="#A6FFC46B"
+                                 VerticalAlignment="Center"
+                                 Visibility="Collapsed"
+                                 IsHitTestVisible="False"/>
                     </StackPanel>
                 </Grid>
 
@@ -742,8 +753,100 @@
                     </Grid>
                 </Grid>
 
-                <!-- 消息层：系统通知到达时自动展开，完整显示应用名 + 正文。
-                     正文 TextWrapping=Wrap、不做截断；尺寸由代码按文本实测后设定。 -->
+                <!-- 插件面板：待机时点击胶囊展开，滚轮左右切换插件卡片。
+                     两张卡片做交叠滑动，由代码驱动位移与透明度，动画结束后回落到常驻卡片。 -->
+                <Grid x:Name="PluginLayer"
+                      Width="300" Height="118"
+                      Opacity="0"
+                      IsHitTestVisible="False"
+                      VerticalAlignment="Center">
+                    <Grid x:Name="PluginCardFront">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="PluginFrontShift"/>
+                        </Grid.RenderTransform>
+                        <Border Background="#12FFFFFF" CornerRadius="14" Padding="14,11">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <TextBlock x:Name="PluginFrontName"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextPrimary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <Border x:Name="PluginFrontBadge"
+                                            HorizontalAlignment="Right"
+                                            Background="#18FFFFFF"
+                                            CornerRadius="6"
+                                            Padding="6,2">
+                                        <TextBlock x:Name="PluginFrontKind"
+                                                   FontSize="9"
+                                                   Foreground="{StaticResource TextSecondary}"/>
+                                    </Border>
+                                </Grid>
+                                <StackPanel x:Name="PluginFrontMetrics"
+                                            Grid.Row="1"
+                                            Margin="0,8,0,0"
+                                            VerticalAlignment="Center"/>
+                                <Grid Grid.Row="2" Margin="0,6,0,0">
+                                    <StackPanel x:Name="PluginFrontDots" Orientation="Horizontal" VerticalAlignment="Center"/>
+                                    <TextBlock FontSize="9"
+                                               Foreground="{StaticResource TextSecondary}"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"
+                                               Text="滚轮切换"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    <Grid x:Name="PluginCardIncoming" Visibility="Collapsed" Opacity="0">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="PluginIncomingShift"/>
+                        </Grid.RenderTransform>
+                        <Border Background="#12FFFFFF" CornerRadius="14" Padding="14,11">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid>
+                                    <TextBlock x:Name="PluginIncomingName"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextPrimary}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <Border x:Name="PluginIncomingBadge"
+                                            HorizontalAlignment="Right"
+                                            Background="#18FFFFFF"
+                                            CornerRadius="6"
+                                            Padding="6,2">
+                                        <TextBlock x:Name="PluginIncomingKind"
+                                                   FontSize="9"
+                                                   Foreground="{StaticResource TextSecondary}"/>
+                                    </Border>
+                                </Grid>
+                                <StackPanel x:Name="PluginIncomingMetrics"
+                                            Grid.Row="1"
+                                            Margin="0,8,0,0"
+                                            VerticalAlignment="Center"/>
+                                <Grid Grid.Row="2" Margin="0,6,0,0">
+                                    <StackPanel x:Name="PluginIncomingDots" Orientation="Horizontal" VerticalAlignment="Center"/>
+                                    <TextBlock FontSize="9"
+                                               Foreground="{StaticResource TextSecondary}"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"
+                                               Text="滚轮切换"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+
                 <Grid x:Name="NotificationLayer"
                       Width="300" Height="96"
                       Opacity="0"
@@ -766,6 +869,40 @@
                                        LineHeight="17"
                                        LineStackingStrategy="BlockLineHeight"/>
                         </ScrollViewer>
+                        <!-- 交互通知的回复栏：MCP 插件提问时出现，回车发送，Shift+回车换行 -->
+                        <Grid x:Name="ReplyBar" Margin="0,8,0,0" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Background="#14FFFFFF" CornerRadius="8" Padding="8,3">
+                                <StackPanel>
+                                    <TextBox x:Name="ReplyInput"
+                                             FontSize="12"
+                                             Foreground="{StaticResource TextPrimary}"
+                                             CaretBrush="{StaticResource TextPrimary}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             Padding="0"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             MaxHeight="60"
+                                             VerticalScrollBarVisibility="Auto"
+                                             PreviewKeyDown="OnReplyKeyDown"/>
+                                    <TextBlock FontSize="8.5"
+                                               Foreground="{StaticResource TextSecondary}"
+                                               Margin="0,2,0,0"
+                                               Text="Shift+Enter 换行"/>
+                                </StackPanel>
+                            </Border>
+                            <Button x:Name="ReplySendButton"
+                                    Grid.Column="1"
+                                    Style="{StaticResource ToolsButton}"
+                                    Content="发送"
+                                    Margin="8,0,0,0"
+                                    VerticalAlignment="Top"
+                                    Click="OnReplySend"/>
+                        </Grid>
                     </StackPanel>
                 </Grid>
 

@@ -72,6 +72,12 @@ namespace Pynelith.Island.Configuration
             {
                 config.CornerRadius = 24;
             }
+
+            // 老配置里插件市场地址是空的：补上官方市场，升级后开箱即用
+            if (string.IsNullOrWhiteSpace(config.PluginCatalogUrl))
+            {
+                config.PluginCatalogUrl = IslandConfig.DefaultPluginCatalogUrl;
+            }
         }
 
         /// <summary>

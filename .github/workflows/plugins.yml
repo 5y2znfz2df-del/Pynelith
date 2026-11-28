@@ -1,0 +1,96 @@
+name: 插件市场
+
+# 把 plugins\ 下的每个插件打成 zip，连同 plugin-index.json 一起发到 "plugins" 这个 Release。
+# 清单地址固定为 releases/download/plugins/plugin-index.json，客户端默认读它。
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'plugins/**'
+      - '.github/workflows/plugins.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 构建并打包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = '${{ github.repository }}'
+          $artifactDir = Join-Path $PWD 'artifacts'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          $entries = @()
+
+          foreach ($dir in Get-ChildItem 'plugins' -Directory) {
+            $manifestPath = Join-Path $dir.FullName 'plugin.json'
+            if (-not (Test-Path $manifestPath)) { continue }
+
+            $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $csproj = Get-ChildItem $dir.FullName -Filter *.csproj | Select-Object -First 1
+            if (-not $csproj) { continue }
+
+            dotnet build $csproj.FullName -c Release -v m | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "构建失败：$($dir.Name)" }
+
+            $staging = Join-Path $artifactDir ('stage-' + $manifest.id)
+            New-Item -ItemType Directory -Force -Path $staging | Out-Null
+            Copy-Item $manifestPath (Join-Path $staging 'plugin.json') -Force
+
+            $buildRoot = Join-Path $dir.FullName 'bin\Release'
+            if (Test-Path $buildRoot) {
+              Get-ChildItem $buildRoot -Directory | ForEach-Object {
+                Get-ChildItem $_.FullName -File | Where-Object {
+                  $_.Extension -ne '.pdb' -and
+                  $_.Name -notlike 'Pynelith.Plugins.Abstractions*' -and
+                  $_.Name -notlike 'Pynelith.Island*'
+                } | Copy-Item -Destination $staging -Force
+              }
+            }
+
+            $zipName = "$($manifest.id)-$($manifest.version).zip"
+            $zipPath = Join-Path $artifactDir $zipName
+            if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+            Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath
+            Remove-Item $staging -Recurse -Force
+
+            $entries += [ordered]@{
+              id          = $manifest.id
+              name        = $manifest.name
+              description = $manifest.description
+              version     = $manifest.version
+              kind        = $manifest.kind
+              downloadUrl = "https://github.com/$repo/releases/download/plugins/$zipName"
+              sha256      = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+
+          $json = @{ version = 1; plugins = $entries } | ConvertTo-Json -Depth 5
+          [System.IO.File]::WriteAllText((Join-Path $artifactDir 'plugin-index.json'), $json, (New-Object System.Text.UTF8Encoding($false)))
+
+      - name: 发布到 plugins Release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactDir = Join-Path $PWD 'artifacts'
+
+          gh release view plugins 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create plugins --title '插件市场' --notes 'Pynelith 官方插件包。plugin-index.json 是客户端读取的清单，其余为各插件的 zip。'
+          }
+
+          $files = @(Get-ChildItem $artifactDir -File | ForEach-Object { $_.FullName })
+          gh release upload plugins @files --clobber
